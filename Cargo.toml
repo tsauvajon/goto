@@ -1,0 +1,9 @@
+[package]
+name = "shorturl"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+actix-web = "3"
+futures = "0.3"
+url = "2.2.2"
