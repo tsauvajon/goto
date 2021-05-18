@@ -1,6 +1,6 @@
 #![feature(map_try_insert)]
 
-use actix_web::{error, get, post, web, App, HttpServer, Responder};
+use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,9 @@ async fn browse(db: web::Data<Db>, web::Path((id,)): web::Path<(String,)>) -> im
 
     match db.get(&id) {
         None => Err(error::ErrorNotFound("not found")),
-        Some(url) => Ok(format!("redirecting to {}...", url)),
+        Some(url) => Ok(HttpResponse::Found()
+            .header("Location", &**url)
+            .body(format!("redirecting to {}...", url))),
     }
 }
 
