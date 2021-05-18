@@ -16,7 +16,7 @@ async fn browse(db: web::Data<Db>, web::Path((id,)): web::Path<(String,)>) -> im
 
     match db.get(&id) {
         None => Err(error::ErrorNotFound("not found")),
-        Some(url) => Ok(format!("redirecting to {}", url)),
+        Some(url) => Ok(format!("redirecting to {}...", url)),
     }
 }
 
@@ -36,14 +36,22 @@ async fn create(
         body.extend_from_slice(&chunk);
     }
 
-    let target = String::from_utf8(body[..].to_vec()).unwrap();
+    let target = match String::from_utf8(body[..].to_vec()) {
+        Ok(target) => target,
+        Err(err) => {
+            return Err(error::ErrorBadRequest(format!(
+                "invalid request body: {}",
+                err
+            )))
+        }
+    };
     if let Err(err) = Url::parse(&target) {
         return Err(error::ErrorBadRequest(format!("malformed URL: {}", err)));
     };
 
     let mut db = db.lock().unwrap();
     match db.try_insert(id.clone(), target.clone()) {
-        Ok(_) => Ok(format!("created {} to redirect to {}", id, target)),
+        Ok(_) => Ok(format!("/{} now redirects to {}", id, target)),
         Err(_) => Err(error::ErrorBadRequest("already registered")),
     }
 }
