@@ -11,7 +11,7 @@ const MAX_SIZE: usize = 1_024; // max payload size is 1k
 type Db = Arc<Mutex<HashMap<String, String>>>;
 
 #[get("/{id}")]
-async fn browse(db: web::Data<Db>, web::Path((id,)): web::Path<(String,)>) -> impl Responder {
+async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Responder {
     let db = db.lock().unwrap();
 
     match db.get(&id) {
@@ -66,4 +66,50 @@ async fn main() -> std::io::Result<()> {
         .bind("127.0.0.1:8080")?
         .run()
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{http, test};
+
+    #[actix_rt::test]
+    async fn integration_test_create_shortened_url() {
+        let req = test::TestRequest::post()
+            .uri("/hello")
+            .set_payload("https://hello.world")
+            .to_request();
+
+        let db: Db = Arc::new(Mutex::new(HashMap::new()));
+
+        let mut app =
+            test::init_service(App::new().data(db.clone()).service(browse).service(create)).await;
+        let resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), http::StatusCode::OK);
+
+        let db = db.lock().unwrap();
+        assert_eq!(db.get("hello"), Some(&"https://hello.world".to_string()));
+        assert_eq!(db.get("wwerwewrew"), None);
+    }
+
+    #[actix_rt::test]
+    async fn integration_use_shortened_url() {
+        let req = test::TestRequest::get()
+            .uri("/hi")
+            .method(http::Method::GET)
+            .to_request();
+
+        let mut db: HashMap<String, String> = HashMap::new();
+        db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
+
+        let mut app = test::init_service(
+            App::new()
+                .data(Arc::new(Mutex::new(db)))
+                .service(browse)
+                .service(create),
+        )
+        .await;
+        let resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), http::StatusCode::FOUND);
+    }
 }
