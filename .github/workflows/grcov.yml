@@ -1,6 +1,6 @@
 on: [push]
 
-name: Code Coverage
+name: GRCov
 
 jobs:
   lint:
