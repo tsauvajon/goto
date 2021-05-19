@@ -1,5 +1,3 @@
-#![feature(map_try_insert)]
-
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
@@ -46,9 +44,11 @@ fn create_short_url(
     };
 
     let mut db = db.write().unwrap();
-    match db.try_insert(id.clone(), target.clone()) {
-        Ok(_) => Ok(format!("/{} now redirects to {}", id, target)),
-        Err(_) => Err(error::ErrorBadRequest("already registered")),
+    if db.contains_key(&id) {
+        Err(error::ErrorBadRequest("already registered"))
+    } else {
+        db.insert(id.clone(), target.clone());
+        Ok(format!("/{} now redirects to {}", id, target))
     }
 }
 
