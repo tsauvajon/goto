@@ -3,7 +3,7 @@ on: [push]
 name: Tarpaulin
 
 jobs:
-  check:
+  Tarpaulin:
     name: Rust project
     runs-on: ubuntu-latest
     steps:
