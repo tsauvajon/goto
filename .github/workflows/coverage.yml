@@ -1,5 +1,14 @@
-- name: rust-tarpaulin
-  uses: actions-rs/tarpaulin@v0.1.0
+name: Code Coverage
+on: [push]
+jobs:
+  Tarpaulin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: rust-tarpaulin
+        uses: actions-rs/tarpaulin@v0.1.0
 
-- name: rust-grcov
-  uses: actions-rs/grcov@v0.1.5
+  GRCov:
+    runs-on: ubuntu-latest
+    steps:
+      - name: rust-grcov
+        uses: actions-rs/grcov@v0.1.5
