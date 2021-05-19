@@ -1,5 +1,7 @@
 # ShortURL
 
+[![codecov](https://codecov.io/gh/tsauvajon/shorturl/branch/master/graph/badge.svg?token=EbP2Znh1m3)](https://codecov.io/gh/tsauvajon/shorturl)
+
 I can shorten URLs.
 
 ```sh
