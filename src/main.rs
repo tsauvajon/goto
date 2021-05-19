@@ -60,11 +60,31 @@ fn hash(input: &str) -> String {
     blake3::hash(input.as_bytes()).to_hex()[..RANDOM_URL_SIZE].to_string()
 }
 
-fn create_short_url(
+async fn create_short_url(
     db: web::Data<Db>,
-    target: String,
+    mut payload: web::Payload,
     id: Option<String>,
 ) -> Result<String, actix_web::Error> {
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk?;
+        // limit max size of in-memory payload
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return Err(error::ErrorBadRequest("overflow"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let target = match String::from_utf8(body[..].to_vec()) {
+        Ok(target) => target,
+        Err(err) => {
+            return Err(error::ErrorBadRequest(format!(
+                "invalid request body: {}",
+                err
+            )))
+        }
+    };
+
     if let Err(err) = Url::parse(&target) {
         return Err(error::ErrorBadRequest(format!("malformed URL: {}", err)));
     };
@@ -86,55 +106,15 @@ fn create_short_url(
 #[post("/{id}")]
 async fn create_with_id(
     db: web::Data<Db>,
-    mut payload: web::Payload,
+    payload: web::Payload,
     web::Path(id): web::Path<String>,
 ) -> impl Responder {
-    let mut body = web::BytesMut::new();
-    while let Some(chunk) = payload.next().await {
-        let chunk = chunk?;
-        // limit max size of in-memory payload
-        if (body.len() + chunk.len()) > MAX_SIZE {
-            return Err(error::ErrorBadRequest("overflow"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-
-    let target = match String::from_utf8(body[..].to_vec()) {
-        Ok(target) => target,
-        Err(err) => {
-            return Err(error::ErrorBadRequest(format!(
-                "invalid request body: {}",
-                err
-            )))
-        }
-    };
-
-    create_short_url(db, target, Some(id))
+    create_short_url(db, payload, Some(id)).await
 }
 
 #[post("/")]
-async fn create_random(db: web::Data<Db>, mut payload: web::Payload) -> impl Responder {
-    let mut body = web::BytesMut::new();
-    while let Some(chunk) = payload.next().await {
-        let chunk = chunk?;
-        // limit max size of in-memory payload
-        if (body.len() + chunk.len()) > MAX_SIZE {
-            return Err(error::ErrorBadRequest("overflow"));
-        }
-        body.extend_from_slice(&chunk);
-    }
-
-    let target = match String::from_utf8(body[..].to_vec()) {
-        Ok(target) => target,
-        Err(err) => {
-            return Err(error::ErrorBadRequest(format!(
-                "invalid request body: {}",
-                err
-            )))
-        }
-    };
-
-    create_short_url(db, target, None)
+async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Responder {
+    create_short_url(db, payload, None).await
 }
 
 #[actix_web::main]
