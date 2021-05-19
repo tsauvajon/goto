@@ -7,6 +7,7 @@ use std::sync::RwLock;
 use url::Url;
 
 const MAX_SIZE: usize = 1_024; // max payload size is 1k
+const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
 type Db = web::Data<RwLock<HashMap<String, String>>>;
 
@@ -26,8 +27,33 @@ async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Res
     }
 }
 
+fn hash(input: &str) -> String {
+    blake3::hash(input.as_bytes()).to_hex()[..RANDOM_URL_SIZE].to_string()
+}
+
+fn create_short_url(
+    db: web::Data<Db>,
+    target: String,
+    id: Option<String>,
+) -> Result<String, actix_web::Error> {
+    if let Err(err) = Url::parse(&target) {
+        return Err(error::ErrorBadRequest(format!("malformed URL: {}", err)));
+    };
+
+    let id = match id {
+        Some(id) => id,
+        None => hash(&target),
+    };
+
+    let mut db = db.write().unwrap();
+    match db.try_insert(id.clone(), target.clone()) {
+        Ok(_) => Ok(format!("/{} now redirects to {}", id, target)),
+        Err(_) => Err(error::ErrorBadRequest("already registered")),
+    }
+}
+
 #[post("/{id}")]
-async fn create(
+async fn create_with_id(
     db: web::Data<Db>,
     mut payload: web::Payload,
     web::Path(id): web::Path<String>,
@@ -51,25 +77,49 @@ async fn create(
             )))
         }
     };
-    if let Err(err) = Url::parse(&target) {
-        return Err(error::ErrorBadRequest(format!("malformed URL: {}", err)));
+
+    create_short_url(db, target, Some(id))
+}
+
+#[post("/")]
+async fn create_random(db: web::Data<Db>, mut payload: web::Payload) -> impl Responder {
+    let mut body = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk?;
+        // limit max size of in-memory payload
+        if (body.len() + chunk.len()) > MAX_SIZE {
+            return Err(error::ErrorBadRequest("overflow"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let target = match String::from_utf8(body[..].to_vec()) {
+        Ok(target) => target,
+        Err(err) => {
+            return Err(error::ErrorBadRequest(format!(
+                "invalid request body: {}",
+                err
+            )))
+        }
     };
 
-    let mut db = db.write().unwrap();
-    match db.try_insert(id.clone(), target.clone()) {
-        Ok(_) => Ok(format!("/{} now redirects to {}", id, target)),
-        Err(_) => Err(error::ErrorBadRequest("already registered")),
-    }
+    create_short_url(db, target, None)
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let db: Db = web::Data::new(RwLock::new(HashMap::new()));
 
-    HttpServer::new(move || App::new().data(db.clone()).service(browse).service(create))
-        .bind("127.0.0.1:8080")?
-        .run()
-        .await
+    HttpServer::new(move || {
+        App::new()
+            .data(db.clone())
+            .service(browse)
+            .service(create_random)
+            .service(create_with_id)
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
 }
 
 #[cfg(test)]
@@ -81,8 +131,15 @@ mod tests {
         test,
     };
 
+    #[test]
+    fn test_hash() {
+        assert_eq!("4cca4", hash("something"));
+        assert_eq!("284a1", hash("something else"));
+    }
+
+    // create a new custom shorturl
     #[actix_rt::test]
-    async fn test_test_create_shortened_url() {
+    async fn test_create_custom_shortened_url() {
         let req = test::TestRequest::post()
             .uri("/hello")
             .set_payload("https://hello.world")
@@ -90,7 +147,7 @@ mod tests {
 
         let db: Db = web::Data::new(RwLock::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().data(db.clone()).service(create)).await;
+        let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
         let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
@@ -99,6 +156,29 @@ mod tests {
         assert_eq!(db.get("wwerwewrew"), None);
     }
 
+    // create a new random shorturl
+    #[actix_rt::test]
+    async fn test_create_random_shortened_url() {
+        let req = test::TestRequest::post()
+            .uri("/")
+            .set_payload("https://hello.world")
+            .to_request();
+
+        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+
+        let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
+        let resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let db = db.read().unwrap();
+        assert_eq!(
+            db.get(&hash("https://hello.world")),
+            Some(&"https://hello.world".to_string())
+        );
+        assert_eq!(db.get("wwerwewrew"), None);
+    }
+
+    // follow an existing shorturl
     #[actix_rt::test]
     async fn test_use_shortened_url() {
         let req = test::TestRequest::get().uri("/hi").to_request();
@@ -128,7 +208,7 @@ mod tests {
         )
     }
 
-    // querying a shortened URL that doesn't exist
+    // try to follow a shortened URL that doesn't exist
     #[actix_rt::test]
     async fn test_link_miss() {
         let req = test::TestRequest::get()
@@ -148,7 +228,7 @@ mod tests {
         assert_eq!(resp.headers().get("Location"), None)
     }
 
-    // trying to add a link for an already existing short-url
+    // try to add a link for an already existing short-url
     #[actix_rt::test]
     async fn test_collision() {
         let req = test::TestRequest::post()
@@ -165,7 +245,7 @@ mod tests {
         let mut app = test::init_service(
             App::new()
                 .data(web::Data::new(RwLock::new(db)))
-                .service(create),
+                .service(create_with_id),
         )
         .await;
         let mut resp = test::call_service(&mut app, req).await;
