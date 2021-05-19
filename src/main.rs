@@ -1,3 +1,34 @@
+/**
+shorturl is a web server that can host shortened URLs.
+
+## Example usage
+
+Creating a link:
+```
+$ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
+/tsauvajon now redirects to https://linkedin.com/in/tsauvajon
+```
+
+Using it redirects us:
+```
+$ curl 127.0.0.1:8080/tsauvajon -v
+*   Trying 127.0.0.1...
+* TCP_NODELAY set
+* Connected to 127.0.0.1 (127.0.0.1) port 8080 (#0)
+> GET /tsauvajon HTTP/1.1
+> Host: 127.0.0.1:8080
+> User-Agent: curl/7.64.1
+> Accept: * / *
+>
+< HTTP/1.1 302 Found
+< content-length: 51
+< location: https://linkedin.com/in/tsauvajon
+< date: Wed, 19 May 2021 17:36:49 GMT
+<
+* Connection #0 to host 127.0.0.1 left intact
+redirecting to https://linkedin.com/in/tsauvajon...* Closing connection 0
+```
+*/
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
