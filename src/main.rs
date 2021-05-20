@@ -60,33 +60,28 @@ fn hash(input: &str) -> String {
     blake3::hash(input.as_bytes()).to_hex()[..RANDOM_URL_SIZE].to_string()
 }
 
-async fn create_short_url(
-    db: web::Data<Db>,
-    mut payload: web::Payload,
-    id: Option<String>,
-) -> Result<String, actix_web::Error> {
+async fn read_target(mut payload: web::Payload) -> Result<String, String> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
-        let chunk = chunk?;
+        let chunk = chunk.or_else(|err| Err(err.to_string()))?;
         // limit max size of in-memory payload
         if (body.len() + chunk.len()) > MAX_SIZE {
-            return Err(error::ErrorBadRequest("overflow"));
+            return Err("overflow".to_string());
         }
         body.extend_from_slice(&chunk);
     }
 
-    let target = match String::from_utf8(body[..].to_vec()) {
-        Ok(target) => target,
-        Err(err) => {
-            return Err(error::ErrorBadRequest(format!(
-                "invalid request body: {}",
-                err
-            )))
-        }
-    };
+    String::from_utf8(body[..].to_vec())
+        .or_else(|err| Err(format!("invalid request body: {}", err)))
+}
 
+fn create_short_url(
+    db: web::Data<Db>,
+    target: String,
+    id: Option<String>,
+) -> Result<String, String> {
     if let Err(err) = Url::parse(&target) {
-        return Err(error::ErrorBadRequest(format!("malformed URL: {}", err)));
+        return Err(format!("malformed URL: {}", err));
     };
 
     let id = match id {
@@ -96,7 +91,7 @@ async fn create_short_url(
 
     let mut db = db.write().unwrap();
     if db.contains_key(&id) {
-        Err(error::ErrorBadRequest("already registered"))
+        Err("already registered".to_string())
     } else {
         db.insert(id.clone(), target.clone());
         Ok(format!("/{} now redirects to {}", id, target))
@@ -109,12 +104,22 @@ async fn create_with_id(
     payload: web::Payload,
     web::Path(id): web::Path<String>,
 ) -> impl Responder {
-    create_short_url(db, payload, Some(id)).await
+    let target = match read_target(payload).await {
+        Ok(target) => target,
+        Err(err) => return Err(error::ErrorBadRequest(err)),
+    };
+
+    create_short_url(db, target, Some(id)).or_else(|err| Err(error::ErrorBadRequest(err)))
 }
 
 #[post("/")]
 async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Responder {
-    create_short_url(db, payload, None).await
+    let target = match read_target(payload).await {
+        Ok(target) => target,
+        Err(err) => return Err(error::ErrorBadRequest(err)),
+    };
+
+    create_short_url(db, target, None).or_else(|err| Err(error::ErrorBadRequest(err)))
 }
 
 #[actix_web::main]
@@ -136,11 +141,6 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{
-        body::Body,
-        http::{HeaderValue, StatusCode},
-        test,
-    };
 
     #[test]
     fn test_hash() {
@@ -148,9 +148,72 @@ mod tests {
         assert_eq!("284a1", hash("something else"));
     }
 
+    #[test]
+    fn test_create_short_malformed_url() {
+        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+
+        let target = "this is not a valid URL".to_string();
+        let id = Some("hello".to_string());
+        assert_eq!(
+            Err("malformed URL: relative URL without a base".to_string()),
+            create_short_url(web::Data::new(db), target, id)
+        );
+    }
+
+    #[test]
+    fn test_create_short_url() {
+        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+
+        let target = "https://google.com".to_string();
+        let id = "hello".to_string();
+        create_short_url(web::Data::new(db.clone()), target.clone(), Some(id.clone())).unwrap();
+
+        let db = db.read().unwrap();
+        let got = db.get(&id).unwrap();
+        assert_eq!(&target, got);
+    }
+
+    #[test]
+    fn test_create_short_url_hashed_id() {
+        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+
+        let target = "https://google.com";
+        create_short_url(web::Data::new(db.clone()), target.to_string(), None).unwrap();
+
+        let id = hash(target);
+        let db = db.read().unwrap();
+        let got = db.get(&id).unwrap();
+        assert_eq!(&target, got);
+    }
+
+    #[test]
+    fn test_create_short_url_already_exists() {
+        let id = "hello".to_string();
+
+        let mut db: HashMap<String, String> = HashMap::new();
+        db.insert(id.clone(), "some existing value".to_string());
+        let db: Db = web::Data::new(RwLock::new(db));
+
+        let target = "https://google.com".to_string();
+        assert_eq!(
+            Err("already registered".to_string()),
+            create_short_url(web::Data::new(db), target, Some(id))
+        );
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use actix_web::{
+        body::Body,
+        http::{HeaderValue, StatusCode},
+        test,
+    };
+
     // create a new custom shorturl
     #[actix_rt::test]
-    async fn test_create_custom_shortened_url() {
+    async fn integration_test_create_custom_shortened_url() {
         let req = test::TestRequest::post()
             .uri("/hello")
             .set_payload("https://hello.world")
@@ -169,7 +232,7 @@ mod tests {
 
     // create a new random shorturl
     #[actix_rt::test]
-    async fn test_create_random_shortened_url() {
+    async fn integration_test_create_random_shortened_url() {
         let req = test::TestRequest::post()
             .uri("/")
             .set_payload("https://hello.world")
@@ -191,7 +254,7 @@ mod tests {
 
     // follow an existing shorturl
     #[actix_rt::test]
-    async fn test_use_shortened_url() {
+    async fn integration_test_use_shortened_url() {
         let req = test::TestRequest::get().uri("/hi").to_request();
 
         let mut db: HashMap<String, String> = HashMap::new();
@@ -221,7 +284,7 @@ mod tests {
 
     // try to follow a shortened URL that doesn't exist
     #[actix_rt::test]
-    async fn test_link_miss() {
+    async fn integration_test_link_miss() {
         let req = test::TestRequest::get()
             .uri("/thislinkdoesntexist")
             .to_request();
@@ -241,7 +304,7 @@ mod tests {
 
     // try to add a link for an already existing short-url
     #[actix_rt::test]
-    async fn test_collision() {
+    async fn integration_test_collision() {
         let req = test::TestRequest::post()
             .uri("/alreadyexists")
             .set_payload("https://something.new")
