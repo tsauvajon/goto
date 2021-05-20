@@ -25,8 +25,3 @@ jobs:
         with:
           directory: /tmp
           token: ${{secrets.CODECOV_TOKEN}}
-
-      - uses: actions/upload-artifact@v1
-        with:
-          name: grcov-report
-          path: /tmp/grcov-report*
