@@ -29,9 +29,11 @@ $ curl 127.0.0.1:8080/tsauvajon -v
 redirecting to https://linkedin.com/in/tsauvajon...* Closing connection 0
 ```
 */
+use actix_files::{Files, NamedFile};
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::RwLock;
 use url::Url;
 
@@ -40,6 +42,8 @@ const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters lo
 
 type Db = web::Data<RwLock<HashMap<String, String>>>;
 
+/// browse redirects to the long URL hidden behind a short URL, or returns a
+/// 404 not found error if the short URL doesn't exist.
 #[get("/{id}")]
 async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Responder {
     match db.read() {
@@ -56,10 +60,12 @@ async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Res
     }
 }
 
+/// hash returns a short hash of the string passed as a parameter.
 fn hash(input: &str) -> String {
     blake3::hash(input.as_bytes()).to_hex()[..RANDOM_URL_SIZE].to_string()
 }
 
+/// Read a string target from an actix_web Payload
 async fn read_target(mut payload: web::Payload) -> Result<String, String> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
@@ -75,6 +81,9 @@ async fn read_target(mut payload: web::Payload) -> Result<String, String> {
         .or_else(|err| Err(format!("invalid request body: {}", err)))
 }
 
+/// Create an short URL redirecting to a long URL.
+/// If you pass an `id` a parameter, your short URL will be /{id}.
+/// If you pass `None` instead, it will be /{hash of the target URL}.
 fn create_short_url(
     db: web::Data<Db>,
     target: String,
@@ -122,6 +131,12 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
     create_short_url(db, target, None).or_else(|err| Err(error::ErrorBadRequest(err)))
 }
 
+#[get("/")]
+async fn index() -> std::io::Result<NamedFile> {
+    let path: PathBuf = "./front/dist/index.html".parse().unwrap();
+    Ok(NamedFile::open(path)?)
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let db: Db = web::Data::new(RwLock::new(HashMap::new()));
@@ -129,6 +144,8 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .data(db.clone())
+            .service(index)
+            .service(Files::new("/dist", "front/dist/"))
             .service(browse)
             .service(create_random)
             .service(create_with_id)
