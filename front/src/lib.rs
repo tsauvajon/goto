@@ -15,18 +15,21 @@ struct Model {
 enum Msg {
     Create(),
     ReceiveResponse(Result<String, anyhow::Error>),
+    UpdateId(String),
     UpdateTarget(String),
 }
 
 impl Model {
     fn view_form(&self) -> Html {
+        let oninput_id = self.link.callback(|e: InputData| Msg::UpdateId(e.value));
+
         let oninput_target = self
             .link
             .callback(|e: InputData| Msg::UpdateTarget(e.value));
 
         html! {
             <>
-                <input type="text" value=self.id.clone() />
+                <input type="text" oninput=oninput_id value=self.id.clone() />
                 <input type="text" oninput=oninput_target value=self.target.clone() />
                 <button onclick=self.link.callback(|_| Msg::Create())>
                     { "Create short target" }
@@ -74,8 +77,9 @@ impl Component for Model {
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
             Msg::Create() => {
-                let body = yew::format::Nothing;
-                let request = Request::get(self.target.clone()).body(body).unwrap();
+                let request = Request::post(format!("/{}", self.id))
+                    .body(Ok(self.target.clone()))
+                    .unwrap();
 
                 let callback =
                     self.link
@@ -101,6 +105,11 @@ impl Component for Model {
                 self.fetch_task = None;
                 // we want to redraw so that the page displays the location of the ISS instead of
                 // 'fetching...'
+                true
+            }
+
+            Msg::UpdateId(id) => {
+                self.id = id;
                 true
             }
 
