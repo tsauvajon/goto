@@ -143,9 +143,9 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .data(db.clone())
             .service(index)
             .service(Files::new("/dist", "front/dist/"))
+            .data(db.clone())
             .service(browse)
             .service(create_random)
             .service(create_with_id)

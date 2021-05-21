@@ -9,3 +9,5 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 yew = "0.18"
 wasm-bindgen = "0.2.74"
+http = "0.2.4"
+anyhow = "1.0"

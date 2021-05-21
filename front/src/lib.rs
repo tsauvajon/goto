@@ -1,27 +1,114 @@
+use anyhow;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
+use yew::services::fetch::{FetchTask, Request, Response};
 
 struct Model {
     link: ComponentLink<Self>,
-    value: i64,
+    message: Option<String>,
+    error: Option<String>,
+    fetch_task: Option<FetchTask>,
+    id: String,
+    target: String,
 }
 
 enum Msg {
-    AddOne,
+    Create(),
+    ReceiveResponse(Result<String, anyhow::Error>),
+    UpdateTarget(String),
+}
+
+impl Model {
+    fn view_form(&self) -> Html {
+        let oninput_target = self
+            .link
+            .callback(|e: InputData| Msg::UpdateTarget(e.value));
+
+        html! {
+            <>
+                <input type="text" value=self.id.clone() />
+                <input type="text" oninput=oninput_target value=self.target.clone() />
+                <button onclick=self.link.callback(|_| Msg::Create())>
+                    { "Create short target" }
+                </button>
+            </>
+        }
+    }
+
+    fn view_message(&self) -> Html {
+        match self.message.clone() {
+            Some(msg) => html! { <p>{ msg }</p> },
+            None => html! {},
+        }
+    }
+
+    fn view_error(&self) -> Html {
+        match self.error.clone() {
+            Some(err) => html! { <p>{ err }</p> },
+            None => html! {},
+        }
+    }
+
+    fn view_fetching_task(&self) -> Html {
+        match self.fetch_task {
+            Some(_) => html! { <p>{ "Fetching data..." }</p> },
+            None => html! {},
+        }
+    }
 }
 
 impl Component for Model {
     type Message = Msg;
     type Properties = ();
     fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
-        Self { link, value: 0 }
+        Self {
+            link,
+            message: None,
+            error: None,
+            fetch_task: None,
+            id: "tsauvajon".to_string(),
+            target: "https://linkedin.com/in/tsauvajon".to_string(),
+        }
     }
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
-            Msg::AddOne => self.value += 1,
+            Msg::Create() => {
+                let body = yew::format::Nothing;
+                let request = Request::get(self.target.clone()).body(body).unwrap();
+
+                let callback =
+                    self.link
+                        .callback(|response: Response<Result<String, anyhow::Error>>| {
+                            let data = response.into_body();
+                            Msg::ReceiveResponse(data)
+                        });
+
+                let task = yew::services::FetchService::fetch(request, callback)
+                    .expect("failed to start request");
+
+                self.fetch_task = Some(task);
+                true
+            }
+
+            Msg::ReceiveResponse(response) => {
+                match response {
+                    Ok(msg) => {
+                        self.message = Some(msg);
+                    }
+                    Err(error) => self.error = Some(error.to_string()),
+                }
+                self.fetch_task = None;
+                // we want to redraw so that the page displays the location of the ISS instead of
+                // 'fetching...'
+                true
+            }
+
+            Msg::UpdateTarget(target) => {
+                self.target = target;
+                true
+            }
         }
-        true
     }
 
     fn change(&mut self, _props: Self::Properties) -> ShouldRender {
@@ -34,11 +121,17 @@ impl Component for Model {
     fn view(&self) -> Html {
         html! {
             <div>
-                <button onclick=self.link.callback(|_| Msg::AddOne)>{ "+1" }</button>
-                <p>{ self.value }</p>
+                { self.view_form() }
+                { self.view_message() }
+                { self.view_error() }
+                { self.view_fetching_task() }
             </div>
         }
     }
+
+    fn rendered(&mut self, _first_render: bool) {}
+
+    fn destroy(&mut self) {}
 }
 
 #[wasm_bindgen(start)]
