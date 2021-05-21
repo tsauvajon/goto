@@ -5,6 +5,7 @@
 Hello! I'm a service designed to shorten URLs.  
 I'm composed of an API server, an in-memory database and a front-end interface.
 
+![Demo](/demo.gif)
 
 ## Example usage
 
