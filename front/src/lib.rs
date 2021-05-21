@@ -29,10 +29,11 @@ impl Model {
 
         html! {
             <>
-                <input type="text" oninput=oninput_id value=self.id.clone() />
-                <input type="text" oninput=oninput_target value=self.target.clone() />
+                <h1>{ "Short URL" }</h1>
+                <input type="text" placeholder="shortened_url" oninput=oninput_id value=self.id.clone() /><br />
+                <input type="text" placeholder="https://linkedin.com/in/tsauvajon/" oninput=oninput_target value=self.target.clone() />
                 <button onclick=self.link.callback(|_| Msg::Create())>
-                    { "Create short target" }
+                    { "Shorten URL" }
                 </button>
             </>
         }
@@ -69,8 +70,8 @@ impl Component for Model {
             message: None,
             error: None,
             fetch_task: None,
-            id: "tsauvajon".to_string(),
-            target: "https://linkedin.com/in/tsauvajon".to_string(),
+            id: "".to_string(),
+            target: "".to_string(),
         }
     }
 
