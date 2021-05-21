@@ -1,14 +1,26 @@
 body {
-    background: #282a36;
     color: #f8f8f2;
+    background: rgb(167, 33, 69);
 }
 
 div {
+    background: #282a36;
     margin: auto;
     margin-top: 60px;
-    max-width: 50%;
+    max-width: 450px;
     text-align: center;
     vertical-align: middle;
+    padding: 20px 0px 30px;
+
+    border-width: 0px 0px 0px 0px;
+    border-color: rgba(188, 188, 188, 1);
+    border-radius: 25px;
+    border-style: solid;
+    transition: box-shadow 0.6s ease-in-out;
+    box-shadow: 0px 5px 150px 0px #f4a261;
+}
+div:hover {
+    box-shadow: 0 5px 50px rgba(0,0,0,0.6);
 }
 
 input {
@@ -60,4 +72,7 @@ button {
     text-decoration-style: solid;
     text-decoration-thickness: auto;
     text-transform: uppercase;
+}
+button:hover {
+    border-color: #ffffff;
 }
