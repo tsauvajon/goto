@@ -1,4 +1,4 @@
-/**
+/*!
 shorturl is a web server that can host shortened URLs.
 
 ## Example usage
@@ -29,6 +29,15 @@ $ curl 127.0.0.1:8080/tsauvajon -v
 redirecting to https://linkedin.com/in/tsauvajon...* Closing connection 0
 ```
 */
+
+#![deny(
+    warnings,
+    missing_doc_code_examples,
+    missing_docs,
+    clippy::all,
+    clippy::cargo
+)]
+
 use actix_files::{Files, NamedFile};
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
