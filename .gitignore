@@ -1,1 +1,6 @@
 /target
+
+# Waypoint
+.waypoint/
+data.db
+waypoint-restore.db.lock
