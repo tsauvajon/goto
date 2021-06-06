@@ -282,35 +282,25 @@ impl Cli {
             Some(path) => {
                 let path = std::path::Path::new(&path);
 
-                let file = OpenOptions::new()
+                let mut file = OpenOptions::new()
                     .write(true)
                     .create(true)
                     .read(true)
                     .truncate(false)
-                    .open(path.to_owned());
-
-                let mut database = match file {
-                    Ok(file) => file,
-                    Err(_) => {
-                        println!("creating database at {:?}", path.to_owned());
-                        let path = std::path::Path::new(&path);
-                        let prefix = path.parent().unwrap();
-                        std::fs::create_dir_all(prefix).expect("create folder structure");
-                        File::create(path).expect("create database")
-                    }
-                };
+                    .open(path.to_owned())
+                    .expect("opening/creating db file");
 
                 let mut buf = String::new();
-                match database.read_to_string(&mut buf) {
+                match file.read_to_string(&mut buf) {
                     Err(_) => Data::new(HashMap::new()),
                     Ok(len) => {
                         if len == 0 {
-                            Data::new(HashMap::new()).with_persistence(database)
+                            Data::new(HashMap::new()).with_persistence(file)
                         } else {
                             let yaml_contents: HashMap<String, String> =
                                 serde_yaml::from_str(&buf).expect("read database");
 
-                            Data::new(yaml_contents.into()).with_persistence(database)
+                            Data::new(yaml_contents.into()).with_persistence(file)
                         }
                     }
                 }
