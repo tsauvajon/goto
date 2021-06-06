@@ -97,7 +97,7 @@ fn test_insert_data() {
     use std::env::temp_dir;
 
     let dir = temp_dir();
-    let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+    let tmpfile_path = format!("{}/tmpfile2.txt", dir.to_str().unwrap());
     let file = File::create(tmpfile_path.clone()).unwrap();
 
     {
@@ -276,7 +276,7 @@ impl Cli {
         }
     }
 
-    fn open_db(&self) -> Db {
+    fn open_db(&self) -> Result<Db, String> {
         let data = match &self.database {
             None => Data::new(HashMap::new()),
             Some(path) => {
@@ -288,7 +288,7 @@ impl Cli {
                     .read(true)
                     .truncate(false)
                     .open(path.to_owned())
-                    .expect("opening/creating db file");
+                    .or_else(|err| Err(format!("{}", err)))?;
 
                 let mut buf = String::new();
                 match file.read_to_string(&mut buf) {
@@ -298,7 +298,10 @@ impl Cli {
                             Data::new(HashMap::new()).with_persistence(file)
                         } else {
                             let yaml_contents: HashMap<String, String> =
-                                serde_yaml::from_str(&buf).expect("read database");
+                                match serde_yaml::from_str(&buf) {
+                                    Err(err) => return Err(format!("read database: {}", err)),
+                                    Ok(data) => data,
+                                };
 
                             Data::new(yaml_contents.into()).with_persistence(file)
                         }
@@ -307,7 +310,7 @@ impl Cli {
             }
         };
 
-        Db::new(data)
+        Ok(Db::new(data))
     }
 }
 
@@ -356,7 +359,7 @@ mod cli_tests {
             addr: None,
             database: None,
         };
-        let db = cli.open_db();
+        let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
         assert_eq!(true, data.persistence.is_none());
@@ -367,13 +370,13 @@ mod cli_tests {
         use std::env::temp_dir;
 
         let dir = temp_dir();
-        let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+        let tmpfile_path = format!("{}/tmpfile3.txt", dir.to_str().unwrap());
         let cli = Cli {
             front_dist_directory: None,
             addr: None,
             database: Some(tmpfile_path),
         };
-        let db = cli.open_db();
+        let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
         match &data.persistence {
@@ -400,7 +403,7 @@ mod cli_tests {
             addr: None,
             database: Some(tmpfile_path),
         };
-        let db = cli.open_db();
+        let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
         assert_eq!(true, data.persistence.is_some());
@@ -423,11 +426,37 @@ mod cli_tests {
             addr: None,
             database: Some(tmpfile_path),
         };
-        let db = cli.open_db();
+        let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
         assert_eq!(true, data.persistence.is_some());
         assert_eq!(Some(&"http://world".to_string()), data.data.get("hello"));
+    }
+
+    #[test]
+    fn test_open_db_existing_file_with_bad_data() {
+        use std::env::temp_dir;
+        use std::fs::File;
+        use std::io::Write;
+
+        let dir = temp_dir();
+        let tmpfile_path = format!("{}/tmpfile1.txt", dir.to_str().unwrap());
+
+        let mut file = File::create(tmpfile_path.clone()).unwrap();
+        file.write_all(b"ds;flsd'f sdl;flfs~~!./'' /sf/;dsf;lsdf")
+            .unwrap();
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(tmpfile_path),
+        };
+
+        let res = cli.open_db();
+        assert_eq!(true, res.is_err());
+        if let Err(msg) = res {
+            assert_eq!(true, msg.contains("read database: invalid type:"));
+        }
     }
 }
 
@@ -438,7 +467,7 @@ async fn main() -> std::io::Result<()> {
 
     let front_dist_directory = args.get_front_dir();
     let addr: String = args.get_addr();
-    let db = args.open_db();
+    let db = args.open_db().expect("open db");
 
     HttpServer::new(move || {
         App::new()
@@ -651,6 +680,43 @@ mod integration_tests {
             resp.headers().get("Location"),
             Some(&HeaderValue::from_str("https://linkedin.com/in/tsauvajon").unwrap())
         )
+    }
+
+    #[actix_rt::test]
+    async fn integration_test_poisoned_mutex() {
+        use std::panic;
+
+        let req = test::TestRequest::get().uri("/hi").to_request();
+        let mut db: HashMap<String, String> = HashMap::new();
+        db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
+        let db: Db = Db::new(Data::new(db.into()));
+
+        let _result = panic::catch_unwind(|| {
+            panic::set_hook(Box::new(|_info| {
+                // do nothing
+            }));
+
+            // This thread will acquire the mutex first, unwrapping the result of
+            // `lock` because the lock has not been poisoned.
+            let _guard = db.write().unwrap();
+
+            // This panic while holding the lock (`_guard` is in scope) will poison
+            // the mutex.
+            panic!();
+        });
+
+        let _ = panic::take_hook(); // remove the panic hook that mutes panics
+
+        let mut app = test::init_service(App::new().data(db).service(browse)).await;
+        let mut resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = resp.take_body();
+        let body = body.as_ref().unwrap();
+        assert_eq!(
+            &Body::from("poisoned lock: another task failed inside"),
+            body
+        );
     }
 
     // try to follow a shortened URL that doesn't exist
