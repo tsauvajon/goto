@@ -432,7 +432,6 @@ mod cli_tests {
 }
 
 #[actix_web::main]
-#[cfg_attr(tarpaulin, ignore)]
 async fn main() -> std::io::Result<()> {
     let args = Cli::from_args();
 
