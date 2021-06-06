@@ -9,6 +9,7 @@ actix-web = "3"
 futures = "0.3"
 url = "2.2.2"
 blake3 = "0.3.7"
+serde_yaml = "0.8.17"
 
 [dev-dependencies]
 actix-rt = "2.2.0"

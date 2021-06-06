@@ -49,17 +49,52 @@ use url::Url;
 const MAX_SIZE: usize = 1_024; // max payload size is 1k
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
+trait DataStore {
+    fn get(&self, key: &String) -> Option<&String>;
+    fn contains_key(&self, key: &String) -> bool;
+    fn insert(&mut self, key: String, value: String) -> Option<String>;
+}
+
+struct Data(HashMap<String, String>);
+
+impl Data {
+    fn get(&self, key: &str) -> Option<&String> {
+        self.0.get(key)
+    }
+
+    fn contains_key(&self, key: &String) -> bool {
+        self.0.contains_key(key)
+    }
+
+    fn insert(&mut self, key: String, value: String) -> Option<String> {
+        match self.0.insert(key.clone(), value.clone()) {
+            Some(existing_value) => Some(existing_value),
+            None => {
+                let new_entry = serialise_entry(key, value);
+                println!("{}", new_entry.clone());
+                None
+            }
+        }
+    }
+}
+
+impl From<HashMap<String, String>> for Data {
+    fn from(d: HashMap<String, String>) -> Self {
+        Data(d)
+    }
+}
+
 #[derive(Clone)]
 struct Db {
-    data: web::Data<RwLock<HashMap<String, String>>>,
+    data: web::Data<RwLock<Data>>,
 }
 
 impl Db {
     fn read(
         &self,
     ) -> Result<
-        std::sync::RwLockReadGuard<HashMap<String, String>>,
-        std::sync::PoisonError<std::sync::RwLockReadGuard<HashMap<String, String>>>,
+        std::sync::RwLockReadGuard<Data>,
+        std::sync::PoisonError<std::sync::RwLockReadGuard<Data>>,
     > {
         self.data.read()
     }
@@ -67,19 +102,25 @@ impl Db {
     fn write(
         &self,
     ) -> Result<
-        std::sync::RwLockWriteGuard<HashMap<String, String>>,
-        std::sync::PoisonError<std::sync::RwLockWriteGuard<HashMap<String, String>>>,
+        std::sync::RwLockWriteGuard<Data>,
+        std::sync::PoisonError<std::sync::RwLockWriteGuard<Data>>,
     > {
         self.data.write()
     }
 
-    fn new(data: HashMap<String, String>) -> Self {
+    fn new(data: Data) -> Self {
         Db {
             data: web::Data::new(RwLock::new(data)),
         }
     }
 }
-// type Db = web::Data<RwLock<HashMap<String, String>>>;
+
+/// serialise_entry serialises a new database entry into
+/// a new YAML line, that can be added to an existing
+/// database.
+fn serialise_entry(key: String, value: String) -> String {
+    format!("{}: \"{}\"\n", key, value)
+}
 
 /// browse redirects to the long URL hidden behind a short URL, or returns a
 /// 404 not found error if the short URL doesn't exist.
@@ -178,7 +219,7 @@ async fn index() -> std::io::Result<NamedFile> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let db: Db = Db::new(HashMap::new());
+    let db: Db = Db::new(HashMap::new().into());
 
     HttpServer::new(move || {
         App::new()
@@ -206,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_create_short_malformed_url() {
-        let db: Db = Db::new(HashMap::new());
+        let db: Db = Db::new(HashMap::new().into());
 
         let target = "this is not a valid URL".to_string();
         let id = Some("hello".to_string());
@@ -218,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url() {
-        let db: Db = Db::new(HashMap::new());
+        let db: Db = Db::new(HashMap::new().into());
 
         let target = "https://google.com".to_string();
         let id = "hello".to_string();
@@ -231,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url_hashed_id() {
-        let db: Db = Db::new(HashMap::new());
+        let db: Db = Db::new(HashMap::new().into());
 
         let target = "https://google.com";
         create_short_url(web::Data::new(db.clone()), target.to_string(), None).unwrap();
@@ -248,13 +289,48 @@ mod tests {
 
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert(id.clone(), "some existing value".to_string());
-        let db: Db = Db::new(db);
+        let db: Db = Db::new(db.into());
 
         let target = "https://google.com".to_string();
         assert_eq!(
             Err("already registered".to_string()),
             create_short_url(web::Data::new(db), target, Some(id))
         );
+    }
+
+    #[test]
+    fn test_read_database() {
+        extern crate serde_yaml;
+        let data = "hello: http://hello-world.com\nkey2: value2";
+
+        let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&data).unwrap();
+        println!("{:?}", yaml_contents);
+    }
+
+    #[test]
+    // We write new database (= file) lines one at a time, and serde_yaml
+    // to_string method doesn't help for two reasons:
+    //   - we don't need the error handling
+    //   - we don't want the `---\n` prefix
+    //
+    // On the other hand, if we wanted to write the entire database every
+    // time, it would work well.
+    fn test_write_database() {
+        extern crate serde_yaml;
+        let mut database: HashMap<String, String> = HashMap::new();
+        database.insert(
+            "tsauvajon".to_string(),
+            "https://linkedin.com/in/tsauvajon".to_string(),
+        );
+        let want = serde_yaml::to_string(&database).unwrap();
+        let want = want.trim_start_matches("---\n").to_string();
+
+        let got = serialise_entry(
+            "tsauvajon".to_string(),
+            "https://linkedin.com/in/tsauvajon".to_string(),
+        );
+
+        assert_eq!(want, got)
     }
 }
 
@@ -275,7 +351,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(HashMap::new());
+        let db: Db = Db::new(HashMap::new().into());
 
         let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
         let resp = test::call_service(&mut app, req).await;
@@ -294,7 +370,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(HashMap::new());
+        let db: Db = Db::new(HashMap::new().into());
 
         let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
         let resp = test::call_service(&mut app, req).await;
@@ -316,7 +392,7 @@ mod integration_tests {
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
 
-        let mut app = test::init_service(App::new().data(Db::new(db)).service(browse)).await;
+        let mut app = test::init_service(App::new().data(Db::new(db.into())).service(browse)).await;
         let mut resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::FOUND);
 
@@ -340,7 +416,7 @@ mod integration_tests {
             .uri("/thislinkdoesntexist")
             .to_request();
 
-        let db: Db = Db::new(HashMap::new());
+        let db: Db = Db::new(HashMap::new().into());
 
         let mut app = test::init_service(App::new().data(db).service(browse)).await;
         let mut resp = test::call_service(&mut app, req).await;
@@ -368,7 +444,7 @@ mod integration_tests {
         );
 
         let mut app =
-            test::init_service(App::new().data(Db::new(db)).service(create_with_id)).await;
+            test::init_service(App::new().data(Db::new(db.into())).service(create_with_id)).await;
         let mut resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
