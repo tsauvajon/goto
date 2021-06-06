@@ -1,5 +1,5 @@
 /*!
-shorturl is a web server that can host  front_dist_directory: (), addr: (), database: ()  front_dist_directory: (), addr: (), database: () shortened URLs.
+shorturl is a web server that can host shortened URLs.
 
 ## Example usage
 
@@ -44,7 +44,7 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use structopt::StructOpt;
 use url::Url;
 
@@ -54,7 +54,7 @@ const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters lo
 // struct Data(HashMap<String, String>);
 struct Data {
     data: HashMap<String, String>,
-    persistence: Option<Arc<RwLock<File>>>,
+    persistence: Option<File>,
 }
 
 impl Data {
@@ -70,8 +70,7 @@ impl Data {
         match self.data.insert(key.clone(), value.clone()) {
             Some(existing_value) => Some(existing_value),
             None => {
-                if let Some(persistence) = &self.persistence {
-                    let mut file = persistence.write().unwrap();
+                if let Some(file) = &mut self.persistence {
                     file.write_all(serialise_entry(key, value).as_bytes())
                         .expect("persist new entry");
                 }
@@ -87,7 +86,7 @@ impl Data {
         }
     }
 
-    fn with_persistence(mut self, persistence: Arc<RwLock<File>>) -> Self {
+    fn with_persistence(mut self, persistence: File) -> Self {
         self.persistence = Some(persistence);
         self
     }
@@ -282,14 +281,12 @@ impl Cli {
                     Err(_) => Data::new(HashMap::new()),
                     Ok(len) => {
                         if len == 0 {
-                            Data::new(HashMap::new())
-                                .with_persistence(Arc::new(RwLock::new(database)))
+                            Data::new(HashMap::new()).with_persistence(database)
                         } else {
                             let yaml_contents: HashMap<String, String> =
                                 serde_yaml::from_str(&buf).expect("read database");
 
-                            Data::new(yaml_contents.into())
-                                .with_persistence(Arc::new(RwLock::new(database)))
+                            Data::new(yaml_contents.into()).with_persistence(database)
                         }
                     }
                 }
@@ -370,8 +367,7 @@ mod cli_tests {
 
         match &data.persistence {
             None => panic!("expected persistence"),
-            Some(persistence) => {
-                let file = persistence.read().unwrap();
+            Some(file) => {
                 let metadata = file.metadata().unwrap();
                 assert_eq!(true, metadata.is_file());
             }
@@ -398,10 +394,30 @@ mod cli_tests {
         let db = cli.open_db();
         let data = db.read().unwrap();
 
-        if data.persistence.is_none() {
-            panic!("expected persistence");
-        }
+        assert_eq!(true, data.persistence.is_some());
+    }
 
+    #[test]
+    fn test_open_db_existing_file_with_data() {
+        use std::env::temp_dir;
+        use std::fs::File;
+        use std::io::Write;
+
+        let dir = temp_dir();
+        let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+
+        let mut file = File::create(tmpfile_path.clone()).unwrap();
+        file.write_all(b"hello: \"http://world\"\n").unwrap();
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(tmpfile_path),
+        };
+        let db = cli.open_db();
+        let data = db.read().unwrap();
+
+        assert_eq!(true, data.persistence.is_some());
         assert_eq!(Some(&"http://world".to_string()), data.data.get("hello"));
     }
 }

@@ -8,3 +8,4 @@ build-cross: # todo: compress before sending
 	ssh pi -- sudo chown root:root /usr/local/bin/shorturl
 	ssh pi -- sudo chmod 755 /usr/local/bin/shorturl
 	ssh pi -- sudo systemctl restart shorturl.service
+	ssh pi -- sudo journalctl -u shorturl.service
