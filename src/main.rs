@@ -1,5 +1,5 @@
 /*!
-shorturl is a web server that can host shortened URLs.
+shorturl is a web server that can host  front_dist_directory: (), addr: (), database: ()  front_dist_directory: (), addr: (), database: () shortened URLs.
 
 ## Example usage
 
@@ -38,13 +38,12 @@ redirecting to https://linkedin.com/in/tsauvajon ...* Closing connection 0
     clippy::cargo
 )]
 
-use actix_files::{Files, NamedFile};
+use actix_files::Files;
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use structopt::StructOpt;
 use url::Url;
@@ -221,92 +220,210 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
     create_short_url(db, target, None).or_else(|err| Err(error::ErrorBadRequest(err)))
 }
 
-#[get("/")]
-async fn index() -> std::io::Result<NamedFile> {
-    let path: PathBuf = "/etc/shorturl/dist/index.html".parse().unwrap();
-    Ok(NamedFile::open(path)?)
-}
-
 #[derive(StructOpt)]
 struct Cli {
     #[structopt(short = "f", long = "frontdir")]
+    /// Directory where the front-end files are located, default: "front/dist".
     front_dist_directory: Option<String>,
 
-    #[structopt(short = "p", long = "port")]
-    port: Option<usize>,
+    #[structopt(short = "a", long = "addr")]
+    /// Address to run the application on, default: "127.0.0.1:8080".
+    addr: Option<String>,
 
     #[structopt(short = "d", long = "database")]
+    /// Database file to persist the shortened URLs.
+    /// Will be created if it doesn't exist.
+    /// Example: database.yml.
+    /// If this option is omitted, the shortened URLs will not be persisted.
     database: Option<String>,
 }
 
-fn open_db(args: &Cli) -> Db {
-    let data = match &args.database {
-        None => Data::new(HashMap::new()),
-        Some(path) => {
-            let path = std::path::Path::new(&path);
+impl Cli {
+    fn get_front_dir(&self) -> String {
+        match &self.front_dist_directory {
+            Some(dir) => dir.to_owned(),
+            None => "front/dist/".to_string(),
+        }
+    }
 
-            let file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .read(true)
-                .truncate(false)
-                .open(path.clone());
+    fn get_addr(&self) -> String {
+        match &self.addr {
+            Some(addr) => addr.to_owned(),
+            None => "127.0.0.1:8080".to_string(),
+        }
+    }
 
-            let mut database = match file {
-                Ok(file) => file,
-                Err(_) => {
-                    println!("creating database at {:?}", path.clone());
-                    let path = std::path::Path::new(&path);
-                    let prefix = path.parent().unwrap();
-                    std::fs::create_dir_all(prefix).expect("create folder structure");
-                    File::create(path).expect("create database")
-                }
-            };
+    fn open_db(&self) -> Db {
+        let data = match &self.database {
+            None => Data::new(HashMap::new()),
+            Some(path) => {
+                let path = std::path::Path::new(&path);
 
-            let mut buf = String::new();
-            match database.read_to_string(&mut buf) {
-                Err(_) => Data::new(HashMap::new()),
-                Ok(len) => {
-                    if len == 0 {
-                        Data::new(HashMap::new()).with_persistence(Arc::new(RwLock::new(database)))
-                    } else {
-                        let yaml_contents: HashMap<String, String> =
-                            serde_yaml::from_str(&buf).expect("read database");
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .read(true)
+                    .truncate(false)
+                    .open(path.to_owned());
 
-                        Data::new(yaml_contents.into())
-                            .with_persistence(Arc::new(RwLock::new(database)))
+                let mut database = match file {
+                    Ok(file) => file,
+                    Err(_) => {
+                        println!("creating database at {:?}", path.to_owned());
+                        let path = std::path::Path::new(&path);
+                        let prefix = path.parent().unwrap();
+                        std::fs::create_dir_all(prefix).expect("create folder structure");
+                        File::create(path).expect("create database")
+                    }
+                };
+
+                let mut buf = String::new();
+                match database.read_to_string(&mut buf) {
+                    Err(_) => Data::new(HashMap::new()),
+                    Ok(len) => {
+                        if len == 0 {
+                            Data::new(HashMap::new())
+                                .with_persistence(Arc::new(RwLock::new(database)))
+                        } else {
+                            let yaml_contents: HashMap<String, String> =
+                                serde_yaml::from_str(&buf).expect("read database");
+
+                            Data::new(yaml_contents.into())
+                                .with_persistence(Arc::new(RwLock::new(database)))
+                        }
                     }
                 }
             }
-        }
-    };
+        };
 
-    Db::new(data)
+        Db::new(data)
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::Cli;
+
+    #[test]
+    fn test_get_front_dir() {
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: None,
+        };
+        assert_eq!("front/dist/", cli.get_front_dir());
+
+        let cli = Cli {
+            front_dist_directory: Some("/hello/world/".into()),
+            addr: None,
+            database: None,
+        };
+        assert_eq!("/hello/world/", cli.get_front_dir());
+    }
+
+    #[test]
+    fn test_get_addr() {
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: None,
+        };
+        assert_eq!("127.0.0.1:8080", cli.get_addr());
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: Some("123.34.56.78:99999".into()),
+            database: None,
+        };
+        assert_eq!("123.34.56.78:99999", cli.get_addr());
+    }
+
+    #[test]
+    fn test_open_db_no_persistence() {
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: None,
+        };
+        let db = cli.open_db();
+        let data = db.read().unwrap();
+
+        match data.persistence {
+            None => (),
+            Some(_) => panic!("expected no persistence"),
+        };
+    }
+
+    #[test]
+    fn test_open_db_new_file() {
+        use std::env::temp_dir;
+
+        let dir = temp_dir();
+        let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(tmpfile_path),
+        };
+        let db = cli.open_db();
+        let data = db.read().unwrap();
+
+        match &data.persistence {
+            None => panic!("expected persistence"),
+            Some(persistence) => {
+                let file = persistence.read().unwrap();
+                let metadata = file.metadata().unwrap();
+                assert_eq!(true, metadata.is_file());
+            }
+        };
+    }
+
+    #[test]
+    fn test_open_db_existing_file() {
+        use std::env::temp_dir;
+        use std::fs::File;
+        use std::io::Write;
+
+        let dir = temp_dir();
+        let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+
+        let mut file = File::create(tmpfile_path.clone()).unwrap();
+        file.write_all(b"hello: \"http://world\"\n").unwrap();
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(tmpfile_path),
+        };
+        let db = cli.open_db();
+        let data = db.read().unwrap();
+
+        if data.persistence.is_none() {
+            panic!("expected persistence");
+        }
+
+        assert_eq!(Some(&"http://world".to_string()), data.data.get("hello"));
+    }
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let args = Cli::from_args();
-    let front_dist_directory = match &args.front_dist_directory {
-        Some(dir) => (*dir).clone(),
-        None => "front/dist/".to_string(),
-    };
 
-    let addr = match &args.port {
-        Some(port) => format!("127.0.0.1:{}", port),
-        None => "127.0.0.1:8080".to_string(),
-    };
-
-    let db = open_db(&args);
+    let front_dist_directory = args.get_front_dir();
+    let addr: String = args.get_addr();
+    let db = args.open_db();
 
     HttpServer::new(move || {
         App::new()
-            .service(index)
             .service(Files::new("/dist", front_dist_directory.clone()))
             .data(db.clone())
             .service(browse)
             .service(create_random)
             .service(create_with_id)
+            // this doesn't do exactly what I need (just serve index.html
+            //    on /), but I can't find a simple way of doing it.
+            .service(Files::new("/", front_dist_directory.clone()).index_file("index.html"))
     })
     .bind(addr)?
     .run()

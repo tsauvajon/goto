@@ -15,6 +15,13 @@ I'm composed of an API server, an in-memory database and a front-end interface.
 cargo run
 ```
 
+With some options:
+```sh
+cargo run -- --addr 127.0.0.1:50002 --database ./database.yml --frontdir front/dist/
+```
+
+Use `cargo run -- --help for available options and their description.
+
 ### Use the API
 
 ```sh
