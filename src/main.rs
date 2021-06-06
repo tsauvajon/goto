@@ -605,6 +605,27 @@ mod integration_tests {
         assert_eq!(db.get("wwerwewrew"), None);
     }
 
+    #[actix_rt::test]
+    async fn integration_test_create_random_shortened_url_bad_body() {
+        let req = test::TestRequest::post()
+            .uri("/")
+            .set_payload(vec![0, 159, 146, 150])
+            .to_request();
+
+        let db: Db = Db::new(Data::new(HashMap::new()));
+
+        let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
+        let mut resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = resp.take_body();
+        let body = body.as_ref().unwrap();
+        assert_eq!(
+            &Body::from("invalid request body: invalid utf-8 sequence of 1 bytes from index 1"),
+            body
+        );
+    }
+
     // follow an existing shorturl
     #[actix_rt::test]
     async fn integration_test_use_shortened_url() {
