@@ -42,21 +42,15 @@ use actix_files::{Files, NamedFile};
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
+use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use structopt::StructOpt;
 use url::Url;
 
 const MAX_SIZE: usize = 1_024; // max payload size is 1k
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
-
-trait DataStore {
-    fn get(&self, key: &String) -> Option<&String>;
-    fn contains_key(&self, key: &String) -> bool;
-    fn insert(&mut self, key: String, value: String) -> Option<String>;
-}
 
 struct Data(HashMap<String, String>);
 
@@ -88,11 +82,15 @@ impl From<HashMap<String, String>> for Data {
 }
 
 #[derive(Clone)]
-struct Db {
+struct Db<W> {
     data: web::Data<RwLock<Data>>,
+    database: W,
 }
 
-impl Db {
+impl<W> Db<Option<Arc<RwLock<W>>>>
+where
+    W: Write,
+{
     fn read(
         &self,
     ) -> Result<
@@ -111,9 +109,10 @@ impl Db {
         self.data.write()
     }
 
-    fn new(data: Data) -> Self {
+    fn new(data: Data, database: Option<Arc<RwLock<W>>>) -> Self {
         Db {
             data: web::Data::new(RwLock::new(data)),
+            database,
         }
     }
 }
@@ -128,7 +127,10 @@ fn serialise_entry(key: String, value: String) -> String {
 /// browse redirects to the long URL hidden behind a short URL, or returns a
 /// 404 not found error if the short URL doesn't exist.
 #[get("/{id}")]
-async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Responder {
+async fn browse(
+    db: web::Data<Db<Option<Arc<RwLock<File>>>>>,
+    web::Path(id): web::Path<String>,
+) -> impl Responder {
     match db.read() {
         Ok(db) => match db.get(&id) {
             None => Err(error::ErrorNotFound("not found")),
@@ -168,7 +170,7 @@ async fn read_target(mut payload: web::Payload) -> Result<String, String> {
 /// If you pass an `id` a parameter, your short URL will be /{id}.
 /// If you pass `None` instead, it will be /{hash of the target URL}.
 fn create_short_url(
-    db: web::Data<Db>,
+    db: web::Data<Db<Option<Arc<RwLock<impl Write>>>>>,
     target: String,
     id: Option<String>,
 ) -> Result<String, String> {
@@ -192,7 +194,7 @@ fn create_short_url(
 
 #[post("/{id}")]
 async fn create_with_id(
-    db: web::Data<Db>,
+    db: web::Data<Db<Option<Arc<RwLock<File>>>>>,
     payload: web::Payload,
     web::Path(id): web::Path<String>,
 ) -> impl Responder {
@@ -205,7 +207,10 @@ async fn create_with_id(
 }
 
 #[post("/")]
-async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Responder {
+async fn create_random(
+    db: web::Data<Db<Option<Arc<RwLock<File>>>>>,
+    payload: web::Payload,
+) -> impl Responder {
     let target = match read_target(payload).await {
         Ok(target) => target,
         Err(err) => return Err(error::ErrorBadRequest(err)),
@@ -232,42 +237,51 @@ struct Cli {
     database: Option<String>,
 }
 
+fn open_db(args: &Cli) -> Db<Option<Arc<RwLock<File>>>> {
+    match &args.database {
+        Some(path) => {
+            let path = std::path::Path::new(&path);
+            let mut database = File::open(path.clone()).expect("open database");
+            let mut buf = String::new();
+            return match database.read_to_string(&mut buf) {
+                Ok(len) => {
+                    if len == 0 {
+                        Db::new(HashMap::new().into(), None)
+                    } else {
+                        let yaml_contents: HashMap<String, String> =
+                            serde_yaml::from_str(&buf).expect("read database");
+                        Db::new(yaml_contents.into(), Some(Arc::new(RwLock::new(database))))
+                    }
+                }
+                Err(_) => {
+                    println!("creating database at {:?}", path.clone());
+                    let path = std::path::Path::new(&path);
+                    let prefix = path.parent().unwrap();
+                    std::fs::create_dir_all(prefix).expect("create folder structure");
+                    let database = File::create(path).expect("create database");
+
+                    Db::new(HashMap::new().into(), Some(Arc::new(RwLock::new(database))))
+                }
+            };
+        }
+        None => Db::new(HashMap::new().into(), None),
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let args = Cli::from_args();
-    let front_dist_directory = match args.front_dist_directory {
-        Some(dir) => dir,
+    let front_dist_directory = match &args.front_dist_directory {
+        Some(dir) => (*dir).clone(),
         None => "front/dist/".to_string(),
     };
 
-    let addr = match args.port {
+    let addr = match &args.port {
         Some(port) => format!("127.0.0.1:{}", port),
         None => "127.0.0.1:8080".to_string(),
     };
 
-    let db: Db = match args.database {
-        Some(path) => match fs::read_to_string(path.clone()) {
-            Ok(contents) => {
-                if contents.len() == 0 {
-                    Db::new(HashMap::new().into())
-                } else {
-                    let yaml_contents: HashMap<String, String> =
-                        serde_yaml::from_str(&contents).expect("read database");
-                    Db::new(yaml_contents.into())
-                }
-            }
-            Err(_) => {
-                println!("creating database at {}", path.clone());
-                let path = std::path::Path::new(&path);
-                let prefix = path.parent().unwrap();
-                std::fs::create_dir_all(prefix).expect("create folder structure");
-                File::create(path).expect("create database");
-
-                Db::new(HashMap::new().into())
-            }
-        },
-        None => Db::new(HashMap::new().into()),
-    };
+    let db = open_db(&args);
 
     HttpServer::new(move || {
         App::new()
@@ -295,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_create_short_malformed_url() {
-        let db: Db = Db::new(HashMap::new().into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(HashMap::new().into(), None);
 
         let target = "this is not a valid URL".to_string();
         let id = Some("hello".to_string());
@@ -307,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url() {
-        let db: Db = Db::new(HashMap::new().into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(HashMap::new().into(), None);
 
         let target = "https://google.com".to_string();
         let id = "hello".to_string();
@@ -320,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url_hashed_id() {
-        let db: Db = Db::new(HashMap::new().into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(HashMap::new().into(), None);
 
         let target = "https://google.com";
         create_short_url(web::Data::new(db.clone()), target.to_string(), None).unwrap();
@@ -337,7 +351,7 @@ mod tests {
 
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert(id.clone(), "some existing value".to_string());
-        let db: Db = Db::new(db.into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(db.into(), None);
 
         let target = "https://google.com".to_string();
         assert_eq!(
@@ -399,7 +413,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(HashMap::new().into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(HashMap::new().into(), None);
 
         let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
         let resp = test::call_service(&mut app, req).await;
@@ -418,7 +432,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(HashMap::new().into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(HashMap::new().into(), None);
 
         let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
         let resp = test::call_service(&mut app, req).await;
@@ -440,7 +454,9 @@ mod integration_tests {
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
 
-        let mut app = test::init_service(App::new().data(Db::new(db.into())).service(browse)).await;
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(db.into(), None);
+
+        let mut app = test::init_service(App::new().data(db).service(browse)).await;
         let mut resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::FOUND);
 
@@ -464,7 +480,7 @@ mod integration_tests {
             .uri("/thislinkdoesntexist")
             .to_request();
 
-        let db: Db = Db::new(HashMap::new().into());
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(HashMap::new().into(), None);
 
         let mut app = test::init_service(App::new().data(db).service(browse)).await;
         let mut resp = test::call_service(&mut app, req).await;
@@ -491,8 +507,8 @@ mod integration_tests {
             "https://github.com/tsauvajon".into(),
         );
 
-        let mut app =
-            test::init_service(App::new().data(Db::new(db.into())).service(create_with_id)).await;
+        let db: Db<Option<Arc<RwLock<File>>>> = Db::new(db.into(), None);
+        let mut app = test::init_service(App::new().data(db).service(create_with_id)).await;
         let mut resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
