@@ -5,18 +5,18 @@ shorturl is a web server that can host shortened URLs.
 
 Creating a link:
 ```
-$ curl -X POST 127.0.0.1:50002/tsauvajon -d "https://linkedin.com/in/tsauvajon"
+$ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
 /tsauvajon now redirects to https://linkedin.com/in/tsauvajon
 ```
 
 Using it redirects us:
 ```
-$ curl 127.0.0.1:50002/tsauvajon -v
+$ curl 127.0.0.1:8080/tsauvajon -v
 *   Trying 127.0.0.1...
 * TCP_NODELAY set
-* Connected to 127.0.0.1 (127.0.0.1) port 50002 (#0)
+* Connected to 127.0.0.1 (127.0.0.1) port 8080 (#0)
 > GET /tsauvajon HTTP/1.1
-> Host: 127.0.0.1:50002
+> Host: 127.0.0.1:8080
 > User-Agent: curl/7.64.1
 > Accept: * / *
 >
@@ -42,8 +42,11 @@ use actix_files::{Files, NamedFile};
 use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
+use std::fs;
+use std::fs::File;
 use std::path::PathBuf;
 use std::sync::RwLock;
+use structopt::StructOpt;
 use url::Url;
 
 const MAX_SIZE: usize = 1_024; // max payload size is 1k
@@ -217,20 +220,65 @@ async fn index() -> std::io::Result<NamedFile> {
     Ok(NamedFile::open(path)?)
 }
 
+#[derive(StructOpt)]
+struct Cli {
+    #[structopt(short = "f", long = "frontdir")]
+    front_dist_directory: Option<String>,
+
+    #[structopt(short = "p", long = "port")]
+    port: Option<usize>,
+
+    #[structopt(short = "d", long = "database")]
+    database: Option<String>,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let db: Db = Db::new(HashMap::new().into());
+    let args = Cli::from_args();
+    let front_dist_directory = match args.front_dist_directory {
+        Some(dir) => dir,
+        None => "front/dist/".to_string(),
+    };
+
+    let addr = match args.port {
+        Some(port) => format!("127.0.0.1:{}", port),
+        None => "127.0.0.1:8080".to_string(),
+    };
+
+    let db: Db = match args.database {
+        Some(path) => match fs::read_to_string(path.clone()) {
+            Ok(contents) => {
+                if contents.len() == 0 {
+                    Db::new(HashMap::new().into())
+                } else {
+                    let yaml_contents: HashMap<String, String> =
+                        serde_yaml::from_str(&contents).expect("read database");
+                    Db::new(yaml_contents.into())
+                }
+            }
+            Err(_) => {
+                println!("creating database at {}", path.clone());
+                let path = std::path::Path::new(&path);
+                let prefix = path.parent().unwrap();
+                std::fs::create_dir_all(prefix).expect("create folder structure");
+                File::create(path).expect("create database");
+
+                Db::new(HashMap::new().into())
+            }
+        },
+        None => Db::new(HashMap::new().into()),
+    };
 
     HttpServer::new(move || {
         App::new()
             .service(index)
-            .service(Files::new("/dist", "/etc/shorturl/dist/"))
+            .service(Files::new("/dist", front_dist_directory.clone()))
             .data(db.clone())
             .service(browse)
             .service(create_random)
             .service(create_with_id)
     })
-    .bind("127.0.0.1:50002")?
+    .bind(addr)?
     .run()
     .await
 }
