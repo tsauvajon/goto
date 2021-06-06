@@ -92,6 +92,30 @@ impl Data {
     }
 }
 
+#[test]
+fn test_insert_data() {
+    use std::env::temp_dir;
+
+    let dir = temp_dir();
+    let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+    let file = File::create(tmpfile_path.clone()).unwrap();
+
+    {
+        let mut data = Data::new(HashMap::new()).with_persistence(file);
+        let outcome = data.insert("hi".to_string(), "qwerty".to_string());
+        assert_eq!(None, outcome);
+
+        let outcome = data.insert("hi".to_string(), "zxcvbnm".to_string());
+        assert_eq!(Some("qwerty".to_string()), outcome);
+    }
+
+    let mut file = File::open(tmpfile_path).unwrap();
+    let mut got = String::new();
+    file.read_to_string(&mut got).unwrap();
+
+    assert_eq!("hi: \"qwerty\"\n".to_string(), got);
+}
+
 #[derive(Clone)]
 struct Db {
     data: web::Data<RwLock<Data>>,
@@ -345,10 +369,7 @@ mod cli_tests {
         let db = cli.open_db();
         let data = db.read().unwrap();
 
-        match data.persistence {
-            None => (),
-            Some(_) => panic!("expected no persistence"),
-        };
+        assert_eq!(true, data.persistence.is_none());
     }
 
     #[test]
@@ -378,13 +399,11 @@ mod cli_tests {
     fn test_open_db_existing_file() {
         use std::env::temp_dir;
         use std::fs::File;
-        use std::io::Write;
 
         let dir = temp_dir();
         let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
 
-        let mut file = File::create(tmpfile_path.clone()).unwrap();
-        file.write_all(b"hello: \"http://world\"\n").unwrap();
+        File::create(tmpfile_path.clone()).unwrap();
 
         let cli = Cli {
             front_dist_directory: None,
@@ -423,6 +442,7 @@ mod cli_tests {
 }
 
 #[actix_web::main]
+#[cfg_attr(tarpaulin, ignore)]
 async fn main() -> std::io::Result<()> {
     let args = Cli::from_args();
 
