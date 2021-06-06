@@ -26,7 +26,7 @@ $ curl 127.0.0.1:50002/tsauvajon -v
 < date: Wed, 19 May 2021 17:36:49 GMT
 <
 * Connection #0 to host 127.0.0.1 left intact
-redirecting to https://linkedin.com/in/tsauvajon...* Closing connection 0
+redirecting to https://linkedin.com/in/tsauvajon ...* Closing connection 0
 ```
 */
 
@@ -49,7 +49,37 @@ use url::Url;
 const MAX_SIZE: usize = 1_024; // max payload size is 1k
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
-type Db = web::Data<RwLock<HashMap<String, String>>>;
+#[derive(Clone)]
+struct Db {
+    data: web::Data<RwLock<HashMap<String, String>>>,
+}
+
+impl Db {
+    fn read(
+        &self,
+    ) -> Result<
+        std::sync::RwLockReadGuard<HashMap<String, String>>,
+        std::sync::PoisonError<std::sync::RwLockReadGuard<HashMap<String, String>>>,
+    > {
+        self.data.read()
+    }
+
+    fn write(
+        &self,
+    ) -> Result<
+        std::sync::RwLockWriteGuard<HashMap<String, String>>,
+        std::sync::PoisonError<std::sync::RwLockWriteGuard<HashMap<String, String>>>,
+    > {
+        self.data.write()
+    }
+
+    fn new(data: HashMap<String, String>) -> Self {
+        Db {
+            data: web::Data::new(RwLock::new(data)),
+        }
+    }
+}
+// type Db = web::Data<RwLock<HashMap<String, String>>>;
 
 /// browse redirects to the long URL hidden behind a short URL, or returns a
 /// 404 not found error if the short URL doesn't exist.
@@ -60,7 +90,7 @@ async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Res
             None => Err(error::ErrorNotFound("not found")),
             Some(url) => Ok(HttpResponse::Found()
                 .header("Location", url.clone())
-                .body(format!("redirecting to {}...", url))),
+                .body(format!("redirecting to {} ...", url))),
         },
         Err(err) => {
             println!("accessing the db: {}", err);
@@ -148,7 +178,7 @@ async fn index() -> std::io::Result<NamedFile> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+    let db: Db = Db::new(HashMap::new());
 
     HttpServer::new(move || {
         App::new()
@@ -176,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_create_short_malformed_url() {
-        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+        let db: Db = Db::new(HashMap::new());
 
         let target = "this is not a valid URL".to_string();
         let id = Some("hello".to_string());
@@ -188,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url() {
-        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+        let db: Db = Db::new(HashMap::new());
 
         let target = "https://google.com".to_string();
         let id = "hello".to_string();
@@ -201,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url_hashed_id() {
-        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+        let db: Db = Db::new(HashMap::new());
 
         let target = "https://google.com";
         create_short_url(web::Data::new(db.clone()), target.to_string(), None).unwrap();
@@ -218,7 +248,7 @@ mod tests {
 
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert(id.clone(), "some existing value".to_string());
-        let db: Db = web::Data::new(RwLock::new(db));
+        let db: Db = Db::new(db);
 
         let target = "https://google.com".to_string();
         assert_eq!(
@@ -245,7 +275,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+        let db: Db = Db::new(HashMap::new());
 
         let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
         let resp = test::call_service(&mut app, req).await;
@@ -264,7 +294,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+        let db: Db = Db::new(HashMap::new());
 
         let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
         let resp = test::call_service(&mut app, req).await;
@@ -286,19 +316,14 @@ mod integration_tests {
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
 
-        let mut app = test::init_service(
-            App::new()
-                .data(web::Data::new(RwLock::new(db)))
-                .service(browse),
-        )
-        .await;
+        let mut app = test::init_service(App::new().data(Db::new(db)).service(browse)).await;
         let mut resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::FOUND);
 
         let body = resp.take_body();
         let body = body.as_ref().unwrap();
         assert_eq!(
-            &Body::from("redirecting to https://linkedin.com/in/tsauvajon..."),
+            &Body::from("redirecting to https://linkedin.com/in/tsauvajon ..."),
             body
         );
 
@@ -315,7 +340,7 @@ mod integration_tests {
             .uri("/thislinkdoesntexist")
             .to_request();
 
-        let db: Db = web::Data::new(RwLock::new(HashMap::new()));
+        let db: Db = Db::new(HashMap::new());
 
         let mut app = test::init_service(App::new().data(db).service(browse)).await;
         let mut resp = test::call_service(&mut app, req).await;
@@ -342,12 +367,8 @@ mod integration_tests {
             "https://github.com/tsauvajon".into(),
         );
 
-        let mut app = test::init_service(
-            App::new()
-                .data(web::Data::new(RwLock::new(db)))
-                .service(create_with_id),
-        )
-        .await;
+        let mut app =
+            test::init_service(App::new().data(Db::new(db)).service(create_with_id)).await;
         let mut resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
