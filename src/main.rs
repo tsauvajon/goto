@@ -5,18 +5,18 @@ shorturl is a web server that can host shortened URLs.
 
 Creating a link:
 ```
-$ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
+$ curl -X POST 127.0.0.1:50002/tsauvajon -d "https://linkedin.com/in/tsauvajon"
 /tsauvajon now redirects to https://linkedin.com/in/tsauvajon
 ```
 
 Using it redirects us:
 ```
-$ curl 127.0.0.1:8080/tsauvajon -v
+$ curl 127.0.0.1:50002/tsauvajon -v
 *   Trying 127.0.0.1...
 * TCP_NODELAY set
-* Connected to 127.0.0.1 (127.0.0.1) port 8080 (#0)
+* Connected to 127.0.0.1 (127.0.0.1) port 50002 (#0)
 > GET /tsauvajon HTTP/1.1
-> Host: 127.0.0.1:8080
+> Host: 127.0.0.1:50002
 > User-Agent: curl/7.64.1
 > Accept: * / *
 >
@@ -142,7 +142,7 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
 
 #[get("/")]
 async fn index() -> std::io::Result<NamedFile> {
-    let path: PathBuf = "./front/dist/index.html".parse().unwrap();
+    let path: PathBuf = "/etc/shorturl/dist/index.html".parse().unwrap();
     Ok(NamedFile::open(path)?)
 }
 
@@ -153,13 +153,13 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .service(index)
-            .service(Files::new("/dist", "front/dist/"))
+            .service(Files::new("/dist", "/etc/shorturl/dist/"))
             .data(db.clone())
             .service(browse)
             .service(create_random)
             .service(create_with_id)
     })
-    .bind("127.0.0.1:8080")?
+    .bind("127.0.0.1:50002")?
     .run()
     .await
 }
