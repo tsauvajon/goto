@@ -297,11 +297,8 @@ impl Cli {
                         if len == 0 {
                             Data::new(HashMap::new()).with_persistence(file)
                         } else {
-                            let yaml_contents: HashMap<String, String> =
-                                match serde_yaml::from_str(&buf) {
-                                    Err(err) => return Err(format!("read database: {}", err)),
-                                    Ok(data) => data,
-                                };
+                            let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&buf)
+                                .or_else(|err| Err(format!("parse data: {}", err)))?;
 
                             Data::new(yaml_contents.into()).with_persistence(file)
                         }
@@ -455,7 +452,7 @@ mod cli_tests {
         let res = cli.open_db();
         assert_eq!(true, res.is_err());
         if let Err(msg) = res {
-            assert_eq!(true, msg.contains("read database: invalid type:"));
+            assert_eq!(true, msg.contains("parse data: invalid type:"));
         }
     }
 }
