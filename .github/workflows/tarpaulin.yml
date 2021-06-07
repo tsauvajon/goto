@@ -1,9 +1,9 @@
 on: [push]
 
-name: Tarpaulin
+name: Test
 
 jobs:
-  Tarpaulin:
+  Test:
     name: Rust project
     runs-on: ubuntu-latest
     steps:
@@ -32,3 +32,7 @@ jobs:
         with:
           name: code-coverage-report
           path: cobertura.xml
+
+      - name: Run end to end tests
+        steps:
+        - run: ./e2e.sh
