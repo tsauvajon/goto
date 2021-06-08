@@ -12,3 +12,12 @@ build-cross: # todo: compress before sending
 	ssh pi -- sudo chmod 755 /usr/local/bin/shorturl
 	ssh pi -- sudo systemctl restart shorturl.service
 	ssh pi -- sudo journalctl -u shorturl.service
+
+tarpaulin:
+	docker run \
+		--rm \
+		-v $(PWD):/volume \
+		--entrypoint cargo \
+		--security-opt seccomp=unconfined \
+		xd009642/tarpaulin \
+		tarpaulin --exclude-files front/*
