@@ -33,6 +33,4 @@ jobs:
           name: code-coverage-report
           path: cobertura.xml
 
-      - name: Run end to end tests
-        steps:
-        - run: ./e2e.sh
+      - run: ./e2e.sh
