@@ -3,8 +3,8 @@ on: [push]
 name: Test
 
 jobs:
-  Test:
-    name: Rust project
+  Tarpaulin:
+    name: Test and export coverage
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -32,5 +32,18 @@ jobs:
         with:
           name: code-coverage-report
           path: cobertura.xml
+
+  End2End:
+    name: End to end test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
 
       - run: ./e2e.sh
