@@ -17,10 +17,10 @@ cargo run
 
 With some options:
 ```sh
-cargo run -- --addr 127.0.0.1:50002 --database ./database.yml --frontdir front/dist/
+cargo run -- --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/dist/
 ```
 
-Use `cargo run -- --help for available options and their description.
+Use `cargo run -- --help` for available options and their description.
 
 ### Use the API
 
