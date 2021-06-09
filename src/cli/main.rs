@@ -41,14 +41,23 @@ mod test {
 
     struct MockClient {
         create_new_called_with: Option<(String, String)>,
+        want_create_new_called_with: Option<(String, String)>,
+
         get_long_url_called_with: Option<String>,
+        want_get_long_url_called_with: Option<String>,
     }
 
     impl MockClient {
-        fn new() -> Self {
+        fn new(
+            want_create_new_called_with: Option<(String, String)>,
+            want_get_long_url_called_with: Option<String>,
+        ) -> Self {
             MockClient {
                 create_new_called_with: None,
+                want_create_new_called_with,
+
                 get_long_url_called_with: None,
+                want_get_long_url_called_with,
             }
         }
     }
@@ -63,47 +72,45 @@ mod test {
         }
     }
 
+    impl Drop for MockClient {
+        fn drop(&mut self) {
+            assert_eq!(
+                self.want_create_new_called_with,
+                self.create_new_called_with
+            );
+            assert_eq!(
+                self.want_get_long_url_called_with,
+                self.get_long_url_called_with
+            );
+        }
+    }
+
     #[test]
     fn test_cli_create_new() {
-        impl Drop for MockClient {
-            fn drop(&mut self) {
-                assert_eq!(
-                    Some(("hello".to_string(), "http://world".to_string())),
-                    self.create_new_called_with,
-                );
+        let want_create_new_called_with = Some(("hello".to_string(), "http://world".to_string()));
+        let want_get_long_url_called_with = None;
 
-                assert_eq!(None, self.get_long_url_called_with);
-            }
-        }
-
-        let client = MockClient::new();
         let cli = Cli {
             args: Args {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
             },
-            client,
+            client: MockClient::new(want_create_new_called_with, want_get_long_url_called_with),
         };
         cli.run();
     }
 
     #[test]
     fn test_cli_get_long_url() {
-        impl Drop for MockClient {
-            fn drop(&mut self) {
-                assert_eq!(Some("hi".to_string()), self.get_long_url_called_with,);
+        let want_create_new_called_with = None;
+        let want_get_long_url_called_with = Some("hi".to_string());
 
-                assert_eq!(None, self.create_new_called_with);
-            }
-        }
-
-        let client = MockClient::new();
         let cli = Cli {
             args: Args {
                 shorturl: "hi".to_string(),
                 target: None,
             },
-            client,
+            client: MockClient::new(want_create_new_called_with, want_get_long_url_called_with),
         };
         cli.run();
     }
