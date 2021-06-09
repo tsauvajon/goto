@@ -1,5 +1,12 @@
+build:
+	build --release --target arm-unknown-linux-musleabi
+	$(MAKE) deploy
+
 build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
+	$(MAKE) deploy
+
+deploy:
 	scp target/arm-unknown-linux-musleabi/release/shorturl pi:/home/pi/shorturl
 	scp -r front/dist pi:/home/pi/shorturl-dist
 
