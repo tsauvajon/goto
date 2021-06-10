@@ -1,15 +1,18 @@
-# ShortURL
+# GoTo
 
 [![codecov](https://codecov.io/gh/tsauvajon/shorturl/branch/master/graph/badge.svg?token=EbP2Znh1m3)](https://codecov.io/gh/tsauvajon/shorturl)
 
-Hello! I'm a service designed to shorten URLs.  
-I'm composed of an API server, an in-memory database and a front-end interface.
+GoTo is a service designed to shorten URLs.  
+It is an HTTP API server which stores data in-memory and can optionally persist
+it to disk.
+
+2 clients are available for it, a front-end web interface and a CLI tool.
 
 ![Demo](/demo.gif)
 
 ## Example usage
 
-### Start the API
+## API
 
 ```sh
 cargo run
@@ -22,7 +25,11 @@ cargo run -- --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/di
 
 Use `cargo run -- --help` for available options and their description.
 
-### Use the API
+## Clients
+
+### HTTP Client
+
+You can query the API with any HTTP client.
 
 ```sh
 $ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
@@ -32,13 +39,24 @@ $ curl 127.0.0.1:8080/tsauvajon
 redirecting to https://linkedin.com/in/tsauvajon...
 ```
 
-### Build the front-end
+### Web Front-End
 
-The front-end is designed to be served by the API, so make sure to have it
+The front-end is designed to be served by the API, so make sure to have the API
 started and running.
 
 ```sh
 $ cd front/
 $ make build
+
+# it is now ready to be served by the API
 $ echo http://127.0.0.1:8080/
+```
+
+You can optionally serve the front-end with your own web server and routing
+strategy.
+
+### CLI tool
+
+```sh
+goto 
 ```

@@ -2,13 +2,13 @@
 set -e
 
 ADDR=127.0.0.1:9997
-killall shorturl &> /dev/null || true
+killall goto-api &> /dev/null || true
 
 cargo build
-target/debug/shorturl --addr ${ADDR} &
+target/debug/goto-api --addr ${ADDR} &
 
 
-echo 'Waiting for ShortURL to be up and running'
+echo 'Waiting for the GoTo API to be up and running'
 for i in {1..20}
 do
     curl --silent --max-time 1 --fail ${ADDR}/ > /dev/null && break || echo 'not ready...'
@@ -31,4 +31,4 @@ fi
 
 echo "SUCCESS"
 
-killall shorturl
+killall goto-api

@@ -1,5 +1,5 @@
 /*!
-shorturl is a web server that can host shortened URLs.
+goto is a web server that can create shortened URLs.
 
 ## Example usage
 

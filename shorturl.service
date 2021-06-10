@@ -1,8 +1,0 @@
-[Unit]
-Description=URL shortener
-
-[Service]
-ExecStart=/usr/local/bin/shorturl --addr 127.0.0.1:50002 --database /etc/shorturl/database.yml --frontdir /etc/shorturl/dist/
-
-[Install]
-WantedBy=multi-user.target
