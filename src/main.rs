@@ -466,6 +466,8 @@ async fn main() -> std::io::Result<()> {
     let addr: String = args.get_addr();
     let db = args.open_db().expect("open db");
 
+    println!("goto listening at http://{}/", &addr);
+
     HttpServer::new(move || {
         App::new()
             .service(Files::new("/dist", front_dist_directory.clone()))
