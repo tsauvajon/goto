@@ -1,5 +1,7 @@
+use std::fmt::Debug;
+
 use async_trait::async_trait;
-use hyper::Client as HyperClient;
+use hyper::{Client as HyperClient, Uri};
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
@@ -14,41 +16,42 @@ struct Cli<C: Client> {
 }
 
 impl<C: Client> Cli<C> {
-    async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn run(self) -> Result<(), GoToError> {
         match self.args.target {
             Some(target) => self.client.create_new(self.args.shorturl, target).await,
-            None => self.client.get_long_url(self.args.shorturl).await,
+            None => {
+                let location = self.client.get_long_url(self.args.shorturl).await?;
+                println!("redirects to /{}", location);
+
+                Ok(())
+            }
         }
     }
 }
 
 #[cfg(not(tarpaulin_include))]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> Result<(), GoToError> {
     let args = Args::from_args();
+    let hardcoded_base_url = "".to_string();
+
     let cli = Cli {
         args,
-        client: HttpClient::new(),
+        client: HttpClient::new(hardcoded_base_url),
     };
+
     cli.run().await
 }
 
 #[async_trait]
 trait Client {
-    async fn create_new(
-        self,
-        shorturl: String,
-        target: String,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn create_new(self, shorturl: String, target: String) -> Result<(), GoToError>;
 
-    async fn get_long_url(
-        self,
-        shorturl: String,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn get_long_url(self, shorturl: String) -> Result<String, GoToError>;
 }
 
 #[cfg(test)]
-mod client_test {
+mod cli_test {
     use super::*;
 
     struct MockClient {
@@ -73,21 +76,14 @@ mod client_test {
 
     #[async_trait]
     impl Client for MockClient {
-        async fn create_new(
-            mut self,
-            shorturl: String,
-            target: String,
-        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        async fn create_new(mut self, shorturl: String, target: String) -> Result<(), GoToError> {
             self.create_new_called_with = Some((shorturl, target));
             Ok(())
         }
 
-        async fn get_long_url(
-            mut self,
-            shorturl: String,
-        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        async fn get_long_url(mut self, shorturl: String) -> Result<String, GoToError> {
             self.get_long_url_called_with = Some(shorturl);
-            Ok(())
+            Ok(String::new())
         }
     }
 
@@ -136,90 +132,304 @@ mod client_test {
     }
 }
 
-struct HttpClient {}
+#[cfg(test)]
+mod cli_errors_test {
+    use super::*;
+
+    struct MockClient {
+        create_new_called_with: Option<(String, String)>,
+        want_create_new_called_with: Option<(String, String)>,
+
+        get_long_url_called_with: Option<String>,
+        want_get_long_url_called_with: Option<String>,
+    }
+
+    impl MockClient {
+        fn new() -> Self {
+            MockClient {
+                create_new_called_with: None,
+                want_create_new_called_with: None,
+
+                get_long_url_called_with: None,
+                want_get_long_url_called_with: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Client for MockClient {
+        async fn create_new(mut self, shorturl: String, target: String) -> Result<(), GoToError> {
+            self.create_new_called_with = Some((shorturl, target));
+            Ok(())
+        }
+
+        async fn get_long_url(mut self, shorturl: String) -> Result<String, GoToError> {
+            self.get_long_url_called_with = Some(shorturl);
+            Ok(String::new())
+        }
+    }
+
+    impl Drop for MockClient {
+        fn drop(&mut self) {
+            assert_eq!(
+                self.want_create_new_called_with,
+                self.create_new_called_with
+            );
+            assert_eq!(
+                self.want_get_long_url_called_with,
+                self.get_long_url_called_with
+            );
+        }
+    }
+
+    #[actix_rt::test]
+    async fn test_cli_create_new() {
+        let mut client = MockClient::new();
+        client.want_create_new_called_with =
+            Some(("hello".to_string(), "http://world".to_string()));
+
+        let cli = Cli {
+            args: Args {
+                shorturl: "hello".to_string(),
+                target: Some("http://world".to_string()),
+            },
+            client,
+        };
+        cli.run().await.unwrap()
+    }
+
+    #[actix_rt::test]
+    async fn test_cli_get_long_url() {
+        let mut client = MockClient::new();
+        client.want_get_long_url_called_with = Some("hi".to_string());
+
+        let cli = Cli {
+            args: Args {
+                shorturl: "hi".to_string(),
+                target: None,
+            },
+            client,
+        };
+        cli.run().await.unwrap()
+    }
+}
+
+struct HttpClient {
+    base_url: String,
+}
 
 impl HttpClient {
-    fn new() -> Self {
-        Self {}
+    fn new(base_url: String) -> Self {
+        Self { base_url }
     }
 }
 
 #[async_trait]
 impl Client for HttpClient {
-    async fn create_new(
-        self,
-        shorturl: String,
-        target: String,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn create_new(self, shorturl: String, target: String) -> Result<(), GoToError> {
         let client = HyperClient::new();
-        let uri = "http://127.0.0.1:8080/hi".parse()?;
-        let resp = client.get(uri).await?;
 
-        println!("Response: {}", resp.status());
+        use actix_web::http::uri::InvalidUri;
+        let uri = format!("{}/{}", self.base_url, shorturl)
+            .parse::<Uri>()
+            .or_else(|err: InvalidUri| Err(GoToError::CliError(err.to_string())))?;
 
-        println!("creating new short url {} for {}", shorturl, target);
+        use hyper::{Body, Method, Request};
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .body(Body::from(target))
+            .or_else(|err| Err(GoToError::CliError(err.to_string())))?;
+
+        let resp = client
+            .request(req)
+            .await
+            .or_else(|err| Err(GoToError::ApiError(err.to_string())))?;
+
+        let is_server_error = resp.status().is_server_error();
+        let is_client_error = resp.status().is_client_error();
+        if is_server_error || is_client_error {
+            use hyper::body::HttpBody as _;
+            let body = resp.into_body().data().await.unwrap().unwrap().to_vec();
+            let body = String::from_utf8(body).or_else(|err| {
+                Err(GoToError::ApiError(format!(
+                    "expected utf8: {}",
+                    err.to_string()
+                )))
+            })?;
+
+            if is_server_error {
+                return Err(GoToError::ApiError(body));
+            } else {
+                return Err(GoToError::CliError(body));
+            }
+        }
 
         Ok(())
     }
 
-    async fn get_long_url(
-        self,
-        shorturl: String,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn get_long_url(self, shorturl: String) -> Result<String, GoToError> {
         println!("getting long url for {}", &shorturl);
 
         let client = HyperClient::new();
-        let uri = format!("http://127.0.0.1:8080/{}", shorturl).parse()?;
-        let resp = client.get(uri).await?;
+        let uri = format!("{}/{}", self.base_url, shorturl)
+            .parse::<Uri>()
+            .or_else(|err| Err(GoToError::CliError(err.to_string())))?;
+
+        use hyper::body::HttpBody as _;
+        let resp = client
+            .get(uri)
+            .await
+            .or_else(|err| Err(GoToError::ApiError(err.to_string())))?;
 
         if !resp.status().is_redirection() {
-            Err(NoRedirectionError::new(&shorturl))?;
+            let is_server_error = resp.status().is_server_error();
+            let is_client_error = resp.status().is_client_error();
+            if is_server_error || is_client_error {
+                let body = resp.into_body().data().await.unwrap().unwrap().to_vec();
+                let body = String::from_utf8(body).or_else(|err| {
+                    Err(GoToError::ApiError(format!(
+                        "expected utf8: {}",
+                        err.to_string()
+                    )))
+                })?;
+
+                if is_server_error {
+                    return Err(GoToError::ApiError(body));
+                } else {
+                    return Err(GoToError::CliError(body));
+                }
+            }
+
+            return Err(GoToError::NoRedirection);
         }
 
-        let location = resp.headers().get("location");
-        let location = location.ok_or(NoRedirectionError::new(&shorturl))?;
+        let location = resp
+            .headers()
+            .get("location")
+            .ok_or(GoToError::NoRedirection)?;
 
-        println!("{}", location.to_str()?);
-
-        Ok(())
+        Ok(location
+            .to_str()
+            .or_else(|err| Err(GoToError::ApiError(err.to_string())))?
+            .to_string())
     }
 }
 
-#[derive(Debug)]
-struct NoRedirectionError {
-    shorturl: String,
-}
-
-impl std::fmt::Display for NoRedirectionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "no redirection registered for {}", self.shorturl)
-    }
-}
-
-impl std::error::Error for NoRedirectionError {
-    fn description(&self) -> &str {
-        "no redirection registered"
-    }
-}
-
-impl NoRedirectionError {
-    fn new(shorturl: &str) -> Self {
-        NoRedirectionError {
-            shorturl: shorturl.to_string(),
-        }
-    }
+#[derive(Debug, PartialEq)]
+enum GoToError {
+    NoRedirection,
+    CliError(String),
+    ApiError(String),
 }
 
 #[cfg(test)]
 mod http_client_tests {
+    use httpmock::MockServer;
+
     use super::*;
 
     #[actix_rt::test]
     async fn test_create_new() {
-        let client = HttpClient::new();
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("POST").path("/sdfsdf");
+
+            then.status(200).body("ok!!");
+        });
+
+        let client = HttpClient::new(server.base_url());
         client
-            .create_new("shorturl".to_string(), "http://target.com".to_string())
+            .create_new("sdfsdf".to_string(), "http://target.com".to_string())
             .await
-            .unwrap()
+            .unwrap();
+
+        mock.assert();
+    }
+
+    #[actix_rt::test]
+    async fn test_create_new_client_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("POST").path("/sdfsdf");
+
+            then.status(400).body("è_é");
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client
+            .create_new("sdfsdf".to_string(), "http://target.com".to_string())
+            .await;
+
+        mock.assert();
+        assert_eq!(Err(GoToError::CliError("è_é".to_string())), res);
+    }
+
+    #[actix_rt::test]
+    async fn test_create_new_api_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("POST").path("/sdfsdf");
+
+            then.status(500).body("woops");
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client
+            .create_new("sdfsdf".to_string(), "http://target.com".to_string())
+            .await;
+
+        mock.assert();
+        assert_eq!(Err(GoToError::ApiError("woops".to_string())), res);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_long_url() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("GET").path("/shorturl3");
+
+            then.status(302)
+                .header("location", "http://hi.there")
+                .body("bla bla bla");
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client.get_long_url("shorturl3".to_string()).await.unwrap();
+
+        mock.assert();
+        assert_eq!("http://hi.there", res);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_api_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("GET").path("/shorturl4");
+
+            then.status(500).body("oh no");
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        mock.assert();
+        assert_eq!(Err(GoToError::ApiError("oh no".to_string())), res);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_client_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("GET").path("/shorturl4");
+
+            then.status(400).body("oh no!!");
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        mock.assert();
+        assert_eq!(Err(GoToError::CliError("oh no!!".to_string())), res);
     }
 }
