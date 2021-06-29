@@ -111,7 +111,9 @@ mod cli_test {
             },
             client,
         };
-        cli.run().await.unwrap()
+
+        let got = cli.run().await;
+        assert_eq!(Ok(()), got);
     }
 
     #[actix_rt::test]
@@ -126,7 +128,9 @@ mod cli_test {
             },
             client,
         };
-        cli.run().await.unwrap()
+
+        let got = cli.run().await;
+        assert_eq!(Ok(()), got);
     }
 }
 
