@@ -382,6 +382,29 @@ mod http_client_tests {
     }
 
     #[actix_rt::test]
+    async fn test_create_new_not_utf8_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("POST").path("/qqqqq");
+
+            then.status(500).body(&[0, 159, 146, 150]);
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client
+            .create_new("qqqqq".to_string(), "http://target.com".to_string())
+            .await;
+
+        mock.assert();
+        assert_eq!(
+            Err(GoToError::ApiError(
+                "expected utf8: invalid utf-8 sequence of 1 bytes from index 1".to_string(),
+            )),
+            res
+        );
+    }
+
+    #[actix_rt::test]
     async fn test_get_long_url() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
