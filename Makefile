@@ -1,3 +1,7 @@
+build:
+	build --release --target arm-unknown-linux-musleabi
+	$(MAKE) deploy
+
 build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
 	scp target/arm-unknown-linux-musleabi/release/goto-api pi:/home/pi/goto-api
