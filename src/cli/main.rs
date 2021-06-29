@@ -89,14 +89,13 @@ mod cli_test {
 
     impl Drop for MockClient {
         fn drop(&mut self) {
-            assert_eq!(
-                self.want_create_new_called_with,
-                self.create_new_called_with
-            );
-            assert_eq!(
-                self.want_get_long_url_called_with,
-                self.get_long_url_called_with
-            );
+            let want = self.want_create_new_called_with.as_ref();
+            let got = self.create_new_called_with.as_ref();
+            assert_eq!(want, got);
+
+            let want = self.want_get_long_url_called_with.as_ref();
+            let got = self.get_long_url_called_with.as_ref();
+            assert_eq!(want, got);
         }
     }
 
@@ -171,14 +170,13 @@ mod cli_errors_test {
 
     impl Drop for MockClient {
         fn drop(&mut self) {
-            assert_eq!(
-                self.want_create_new_called_with,
-                self.create_new_called_with
-            );
-            assert_eq!(
-                self.want_get_long_url_called_with,
-                self.get_long_url_called_with
-            );
+            let want = self.want_create_new_called_with.as_ref();
+            let got = self.create_new_called_with.as_ref();
+            assert_eq!(want, got);
+
+            let want = self.want_get_long_url_called_with.as_ref();
+            let got = self.get_long_url_called_with.as_ref();
+            assert_eq!(want, got);
         }
     }
 

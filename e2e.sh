@@ -7,6 +7,7 @@ killall goto-api &> /dev/null || true
 cargo build
 target/debug/goto-api --addr ${ADDR} &
 
+goto='target/debug/goto-cli'
 
 echo 'Waiting for the GoTo API to be up and running'
 for i in {1..20}
