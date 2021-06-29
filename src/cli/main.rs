@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use hyper::{Client as HyperClient, Uri};
 use std::fmt::Debug;
 use structopt::StructOpt;
+use webbrowser;
 
 #[derive(StructOpt)]
 #[structopt(about = "Create shortened URLs")]
@@ -13,6 +14,12 @@ struct Args {
 
     #[structopt(long = "api", help = "Base URL of the GoTo API")]
     api_url: Option<String>,
+
+    #[structopt(short = "s", long = "silent", help = "Don't print redirections")]
+    silent: bool,
+
+    #[structopt(short = "n", long = "no-open-browser", help = "Don't open the browser")]
+    no_browser: bool,
 }
 
 struct Cli<C: Client> {
@@ -26,7 +33,14 @@ impl<C: Client> Cli<C> {
             Some(target) => self.client.create_new(self.args.shorturl, target).await,
             None => {
                 let location = self.client.get_long_url(self.args.shorturl).await?;
-                println!("redirecting to {}", location);
+
+                if !self.args.silent {
+                    println!("redirecting to {}", &location);
+                }
+
+                if !self.args.no_browser {
+                    webbrowser::open(&location).unwrap();
+                }
 
                 Ok(())
             }
@@ -118,6 +132,8 @@ mod cli_test {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
                 api_url: None,
+                silent: true,
+                no_browser: true,
             },
             client,
         };
@@ -136,6 +152,8 @@ mod cli_test {
                 shorturl: "hi".to_string(),
                 target: None,
                 api_url: None,
+                silent: true,
+                no_browser: true,
             },
             client,
         };
@@ -205,6 +223,8 @@ mod cli_errors_test {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
                 api_url: Some("http://12.34.56.78".to_string()),
+                silent: true,
+                no_browser: true,
             },
             client,
         };
@@ -219,8 +239,10 @@ mod cli_errors_test {
         let cli = Cli {
             args: Args {
                 shorturl: "hi".to_string(),
-                api_url: None,
                 target: None,
+                api_url: None,
+                silent: true,
+                no_browser: true,
             },
             client,
         };
@@ -275,8 +297,6 @@ impl Client for HttpClient {
     }
 
     async fn get_long_url(self, shorturl: String) -> Result<String, GoToError> {
-        println!("getting long url for {}", &shorturl);
-
         let client = HyperClient::new();
         let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
 

@@ -1,6 +1,11 @@
 build:
-	build --release --target arm-unknown-linux-musleabi
+	cargo build --release --target arm-unknown-linux-musleabi
 	$(MAKE) deploy
+
+build-cli:
+	cargo build --release --bin goto
+	mv target/release/goto /usr/local/bin/
+	goto --help 
 
 build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
@@ -25,7 +30,6 @@ tarpaulin:
 		--security-opt seccomp=unconfined \
 		xd009642/tarpaulin \
 		tarpaulin --exclude-files front/*
-
 
 coverage:
 	RUSTFLAGS="-Z instrument-coverage" \
