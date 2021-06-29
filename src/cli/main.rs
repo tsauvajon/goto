@@ -1,7 +1,6 @@
-use std::fmt::Debug;
-
 use async_trait::async_trait;
 use hyper::{Client as HyperClient, Uri};
+use std::fmt::Debug;
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
@@ -227,10 +226,7 @@ impl Client for HttpClient {
     async fn create_new(self, shorturl: String, target: String) -> Result<(), GoToError> {
         let client = HyperClient::new();
 
-        use actix_web::http::uri::InvalidUri;
-        let uri = format!("{}/{}", self.base_url, shorturl)
-            .parse::<Uri>()
-            .or_else(|err: InvalidUri| Err(GoToError::CliError(err.to_string())))?;
+        let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
 
         use hyper::{Body, Method, Request};
         let req = Request::builder()
@@ -249,12 +245,7 @@ impl Client for HttpClient {
         if is_server_error || is_client_error {
             use hyper::body::HttpBody as _;
             let body = resp.into_body().data().await.unwrap().unwrap().to_vec();
-            let body = String::from_utf8(body).or_else(|err| {
-                Err(GoToError::ApiError(format!(
-                    "expected utf8: {}",
-                    err.to_string()
-                )))
-            })?;
+            let body = String::from_utf8(body)?;
 
             if is_server_error {
                 return Err(GoToError::ApiError(body));
@@ -270,9 +261,7 @@ impl Client for HttpClient {
         println!("getting long url for {}", &shorturl);
 
         let client = HyperClient::new();
-        let uri = format!("{}/{}", self.base_url, shorturl)
-            .parse::<Uri>()
-            .or_else(|err| Err(GoToError::CliError(err.to_string())))?;
+        let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
 
         use hyper::body::HttpBody as _;
         let resp = client
@@ -285,12 +274,7 @@ impl Client for HttpClient {
             let is_client_error = resp.status().is_client_error();
             if is_server_error || is_client_error {
                 let body = resp.into_body().data().await.unwrap().unwrap().to_vec();
-                let body = String::from_utf8(body).or_else(|err| {
-                    Err(GoToError::ApiError(format!(
-                        "expected utf8: {}",
-                        err.to_string()
-                    )))
-                })?;
+                let body = String::from_utf8(body)?;
 
                 if is_server_error {
                     return Err(GoToError::ApiError(body));
@@ -307,10 +291,7 @@ impl Client for HttpClient {
             .get("location")
             .ok_or(GoToError::NoRedirection)?;
 
-        Ok(location
-            .to_str()
-            .or_else(|err| Err(GoToError::ApiError(err.to_string())))?
-            .to_string())
+        Ok(location.to_str()?.to_string())
     }
 }
 
@@ -319,6 +300,24 @@ enum GoToError {
     NoRedirection,
     CliError(String),
     ApiError(String),
+}
+
+impl From<actix_web::http::uri::InvalidUri> for GoToError {
+    fn from(error: actix_web::http::uri::InvalidUri) -> Self {
+        GoToError::CliError(error.to_string())
+    }
+}
+
+impl From<std::string::FromUtf8Error> for GoToError {
+    fn from(error: std::string::FromUtf8Error) -> Self {
+        GoToError::ApiError(format!("expected utf8: {}", error.to_string()))
+    }
+}
+
+impl From<hyper::header::ToStrError> for GoToError {
+    fn from(error: hyper::header::ToStrError) -> Self {
+        GoToError::ApiError(format!("expected utf8: {}", error.to_string()))
+    }
 }
 
 #[cfg(test)]
