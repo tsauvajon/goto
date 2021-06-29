@@ -432,4 +432,36 @@ mod http_client_tests {
         mock.assert();
         assert_eq!(Err(GoToError::CliError("oh no!!".to_string())), res);
     }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_no_redirection_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("GET").path("/shorturl4");
+
+            then.status(200);
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        mock.assert();
+        assert_eq!(Err(GoToError::NoRedirection), res);
+    }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_no_redirection_err_2() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("GET").path("/shorturl4");
+
+            then.status(302);
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        mock.assert();
+        assert_eq!(Err(GoToError::NoRedirection), res);
+    }
 }
