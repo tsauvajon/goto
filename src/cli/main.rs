@@ -4,9 +4,15 @@ use std::fmt::Debug;
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
+#[structopt(about = "Create shortened URLs")]
 struct Args {
+    #[structopt(help = "Shortened URL")]
     shorturl: String,
+    #[structopt(help = "URL to shorten")]
     target: Option<String>,
+
+    #[structopt(long = "api", help = "Base URL of the GoTo API")]
+    api_url: Option<String>,
 }
 
 struct Cli<C: Client> {
@@ -20,7 +26,7 @@ impl<C: Client> Cli<C> {
             Some(target) => self.client.create_new(self.args.shorturl, target).await,
             None => {
                 let location = self.client.get_long_url(self.args.shorturl).await?;
-                println!("redirects to /{}", location);
+                println!("redirecting to {}", location);
 
                 Ok(())
             }
@@ -32,11 +38,14 @@ impl<C: Client> Cli<C> {
 #[tokio::main]
 async fn main() -> Result<(), GoToError> {
     let args = Args::from_args();
-    let hardcoded_base_url = "".to_string();
+    let url = match &args.api_url {
+        Some(url) => url.to_owned(),
+        None => "http://127.0.0.1:8080".to_string(),
+    };
 
     let cli = Cli {
         args,
-        client: HttpClient::new(hardcoded_base_url),
+        client: HttpClient::new(url),
     };
 
     cli.run().await
@@ -108,6 +117,7 @@ mod cli_test {
             args: Args {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
+                api_url: None,
             },
             client,
         };
@@ -125,6 +135,7 @@ mod cli_test {
             args: Args {
                 shorturl: "hi".to_string(),
                 target: None,
+                api_url: None,
             },
             client,
         };
@@ -193,6 +204,7 @@ mod cli_errors_test {
             args: Args {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
+                api_url: Some("http://12.34.56.78".to_string()),
             },
             client,
         };
@@ -207,6 +219,7 @@ mod cli_errors_test {
         let cli = Cli {
             args: Args {
                 shorturl: "hi".to_string(),
+                api_url: None,
                 target: None,
             },
             client,
@@ -267,7 +280,6 @@ impl Client for HttpClient {
         let client = HyperClient::new();
         let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
 
-        use hyper::body::HttpBody as _;
         let resp = client
             .get(uri)
             .await
@@ -277,6 +289,7 @@ impl Client for HttpClient {
             let is_server_error = resp.status().is_server_error();
             let is_client_error = resp.status().is_client_error();
             if is_server_error || is_client_error {
+                use hyper::body::HttpBody as _;
                 let body = resp.into_body().data().await.unwrap().unwrap().to_vec();
                 let body = String::from_utf8(body)?;
 

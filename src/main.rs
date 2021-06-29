@@ -51,7 +51,6 @@ use url::Url;
 const MAX_SIZE: usize = 1_024; // max payload size is 1k
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
-// struct Data(HashMap<String, String>);
 struct Data {
     data: HashMap<String, String>,
     persistence: Option<File>,
@@ -413,7 +412,7 @@ mod cli_tests {
         use std::io::Write;
 
         let dir = temp_dir();
-        let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+        let tmpfile_path = format!("{}/temporary-file.txt", dir.to_str().unwrap());
 
         let mut file = File::create(tmpfile_path.clone()).unwrap();
         file.write_all(b"hello: \"http://world\"\n").unwrap();

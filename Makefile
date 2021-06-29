@@ -25,3 +25,13 @@ tarpaulin:
 		--security-opt seccomp=unconfined \
 		xd009642/tarpaulin \
 		tarpaulin --exclude-files front/*
+
+
+coverage:
+	RUSTFLAGS="-Z instrument-coverage" \
+		LLVM_PROFILE_FILE="goto-%p-%m.profraw" \
+		cargo +nightly test
+
+	grcov . --binary-path ./target/debug/ -s . -t html --branch --ignore-not-existing --ignore "*cargo*" -o ./coverage/
+	rm *.profraw
+	open coverage/index.html
