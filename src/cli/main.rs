@@ -462,4 +462,25 @@ mod http_client_tests {
         mock.assert();
         assert_eq!(Err(GoToError::NoRedirection), res);
     }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_not_utf8_err() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method("GET").path("/shorturl4");
+
+            then.status(500).body(&[0, 159, 146, 150]);
+        });
+
+        let client = HttpClient::new(server.base_url());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        mock.assert();
+        assert_eq!(
+            Err(GoToError::ApiError(
+                "expected utf8: invalid utf-8 sequence of 1 bytes from index 1".to_string(),
+            )),
+            res
+        );
+    }
 }
