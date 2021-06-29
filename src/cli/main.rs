@@ -324,6 +324,20 @@ impl From<hyper::header::ToStrError> for GoToError {
     }
 }
 
+#[test]
+fn test_from_tostrerror() {
+    let header = hyper::header::HeaderValue::from_bytes(b"Hello \xF0\x90\x80World").unwrap();
+
+    let res = header.to_str();
+    assert!(res.is_err());
+
+    let got = GoToError::from(res.err().unwrap());
+    assert_eq!(
+        GoToError::ApiError("failed to convert header to a str".to_string()),
+        got
+    );
+}
+
 #[cfg(test)]
 mod http_client_tests {
     use super::*;
