@@ -316,21 +316,21 @@ impl From<std::string::FromUtf8Error> for GoToError {
 
 impl From<hyper::header::ToStrError> for GoToError {
     fn from(error: hyper::header::ToStrError) -> Self {
-        GoToError::ApiError(format!("expected utf8: {}", error.to_string()))
+        GoToError::ApiError(error.to_string())
     }
 }
 
 #[cfg(test)]
 mod http_client_tests {
-    use httpmock::MockServer;
-
     use super::*;
+
+    use httpmock::{Method, MockServer};
 
     #[actix_rt::test]
     async fn test_create_new() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("POST").path("/sdfsdf");
+            when.method(Method::POST).path("/sdfsdf");
 
             then.status(200).body("ok!!");
         });
@@ -348,7 +348,7 @@ mod http_client_tests {
     async fn test_create_new_client_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("POST").path("/sdfsdf");
+            when.method(Method::POST).path("/sdfsdf");
 
             then.status(400).body("è_é");
         });
@@ -366,7 +366,7 @@ mod http_client_tests {
     async fn test_create_new_api_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("POST").path("/sdfsdf");
+            when.method(Method::POST).path("/sdfsdf");
 
             then.status(500).body("woops");
         });
@@ -384,7 +384,7 @@ mod http_client_tests {
     async fn test_create_new_not_utf8_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("POST").path("/qqqqq");
+            when.method(Method::POST).path("/qqqqq");
 
             then.status(500).body(&[0, 159, 146, 150]);
         });
@@ -407,7 +407,7 @@ mod http_client_tests {
     async fn test_get_long_url() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("GET").path("/shorturl3");
+            when.method(Method::GET).path("/shorturl3");
 
             then.status(302)
                 .header("location", "http://hi.there")
@@ -425,7 +425,7 @@ mod http_client_tests {
     async fn test_get_long_url_api_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("GET").path("/shorturl4");
+            when.method(Method::GET).path("/shorturl4");
 
             then.status(500).body("oh no");
         });
@@ -441,7 +441,7 @@ mod http_client_tests {
     async fn test_get_long_url_client_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("GET").path("/shorturl4");
+            when.method(Method::GET).path("/shorturl4");
 
             then.status(400).body("oh no!!");
         });
@@ -457,7 +457,7 @@ mod http_client_tests {
     async fn test_get_long_url_no_redirection_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("GET").path("/shorturl4");
+            when.method(Method::GET).path("/shorturl4");
 
             then.status(200);
         });
@@ -473,7 +473,7 @@ mod http_client_tests {
     async fn test_get_long_url_no_redirection_err_2() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("GET").path("/shorturl4");
+            when.method(Method::GET).path("/shorturl4");
 
             then.status(302);
         });
@@ -489,7 +489,7 @@ mod http_client_tests {
     async fn test_get_long_url_not_utf8_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method("GET").path("/shorturl4");
+            when.method(Method::GET).path("/shorturl4");
 
             then.status(500).body(&[0, 159, 146, 150]);
         });
