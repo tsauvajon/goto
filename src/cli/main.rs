@@ -505,4 +505,15 @@ mod http_client_tests {
             res
         );
     }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_invalid_uri() {
+        let client = HttpClient::new("this is an invalid url".to_string());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        assert_eq!(
+            Err(GoToError::CliError("invalid uri character".to_string())),
+            res
+        );
+    }
 }
