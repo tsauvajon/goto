@@ -58,6 +58,13 @@ goto hello
 goto hello --no-open-browser
 ```
 
+#### Clean-up
+
+```sh
+rm /usr/local/bin/goto
+rm -rf $HOME/.goto
+```
+
 ### Web Front-End
 
 ![Front-end Demo](/demo-front.gif)
