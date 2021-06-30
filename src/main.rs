@@ -1,5 +1,5 @@
 /*!
-shorturl is a web server that can host shortened URLs.
+goto is a web server that can create shortened URLs.
 
 ## Example usage
 
@@ -48,10 +48,9 @@ use std::sync::RwLock;
 use structopt::StructOpt;
 use url::Url;
 
-const MAX_SIZE: usize = 1_024; // max payload size is 1k
+const MAX_SIZE: usize = 256; // max payload size is 256 Kb
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
-// struct Data(HashMap<String, String>);
 struct Data {
     data: HashMap<String, String>,
     persistence: Option<File>,
@@ -288,7 +287,7 @@ impl Cli {
                     .read(true)
                     .truncate(false)
                     .open(path.to_owned())
-                    .or_else(|err| Err(format!("{}", err)))?;
+                    .or_else(|err| Err(err.to_string()))?;
 
                 let mut buf = String::new();
                 match file.read_to_string(&mut buf) {
@@ -300,7 +299,7 @@ impl Cli {
                             let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&buf)
                                 .or_else(|err| Err(format!("parse data: {}", err)))?;
 
-                            Data::new(yaml_contents.into()).with_persistence(file)
+                            Data::new(yaml_contents).with_persistence(file)
                         }
                     }
                 }
@@ -413,7 +412,7 @@ mod cli_tests {
         use std::io::Write;
 
         let dir = temp_dir();
-        let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
+        let tmpfile_path = format!("{}/temporary-file.txt", dir.to_str().unwrap());
 
         let mut file = File::create(tmpfile_path.clone()).unwrap();
         file.write_all(b"hello: \"http://world\"\n").unwrap();
@@ -465,6 +464,8 @@ async fn main() -> std::io::Result<()> {
     let front_dist_directory = args.get_front_dir();
     let addr: String = args.get_addr();
     let db = args.open_db().expect("open db");
+
+    println!("goto listening at http://{}/", &addr);
 
     HttpServer::new(move || {
         App::new()
@@ -650,6 +651,24 @@ mod integration_tests {
             &Body::from("invalid request body: invalid utf-8 sequence of 1 bytes from index 1"),
             body
         );
+    }
+
+    #[actix_rt::test]
+    async fn integration_test_create_random_shortened_url_overflow() {
+        let req = test::TestRequest::post()
+            .uri("/toolong")
+            .set_payload(vec![b'a'; 2000])
+            .to_request();
+
+        let db: Db = Db::new(Data::new(HashMap::new()));
+
+        let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
+        let mut resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = resp.take_body();
+        let body = body.as_ref().unwrap();
+        assert_eq!(&Body::from("overflow"), body);
     }
 
     // follow an existing shorturl

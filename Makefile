@@ -1,24 +1,26 @@
 build:
-	build --release --target arm-unknown-linux-musleabi
+	cargo build --release --target arm-unknown-linux-musleabi
 	$(MAKE) deploy
+
+build-cli:
+	cargo build --release --bin goto
+	mv target/release/goto /usr/local/bin/
+	goto --version
 
 build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
-	$(MAKE) deploy
+	scp target/arm-unknown-linux-musleabi/release/goto-api pi:/home/pi/goto-api
+	scp -r front/dist pi:/home/pi/goto-dist
 
-deploy:
-	scp target/arm-unknown-linux-musleabi/release/shorturl pi:/home/pi/shorturl
-	scp -r front/dist pi:/home/pi/shorturl-dist
-
-	ssh pi -- sudo mv /home/pi/shorturl /usr/local/bin/shorturl
-	ssh pi -- sudo mkdir -p /etc/shorturl/dist
-	ssh pi -- sudo rm -rf /etc/shorturl/dist/*
-	ssh pi -- sudo mv /home/pi/shorturl-dist/* /etc/shorturl/dist/*
-	ssh pi -- sudo rm -r /home/pi/shorturl-dist
-	ssh pi -- sudo chown root:root /usr/local/bin/shorturl
-	ssh pi -- sudo chmod 755 /usr/local/bin/shorturl
-	ssh pi -- sudo systemctl restart shorturl.service
-	ssh pi -- sudo journalctl -u shorturl.service
+	ssh pi -- sudo mv /home/pi/goto-api /usr/local/bin/goto-api
+	ssh pi -- sudo mkdir -p /etc/goto/dist
+	ssh pi -- sudo rm -rf /etc/goto/dist/*
+	ssh pi -- sudo mv /home/pi/goto-dist/* /etc/goto/dist/*
+	ssh pi -- sudo rm -r /home/pi/goto-dist
+	ssh pi -- sudo chown root:root /usr/local/bin/goto
+	ssh pi -- sudo chmod 755 /usr/local/bin/goto
+	ssh pi -- sudo systemctl restart goto.service
+	ssh pi -- sudo journalctl -u goto.service
 
 tarpaulin:
 	docker run \
@@ -28,3 +30,13 @@ tarpaulin:
 		--security-opt seccomp=unconfined \
 		xd009642/tarpaulin \
 		tarpaulin --exclude-files front/*
+
+coverage:
+	rm -rf coverage/
+	RUSTFLAGS="-Z instrument-coverage" \
+		LLVM_PROFILE_FILE="goto-%p-%m.profraw" \
+		cargo +nightly test
+
+	grcov . --binary-path ./target/debug/ -s . -t html --branch --ignore-not-existing --ignore "*cargo*" -o ./coverage/
+	rm *.profraw
+	open coverage/index.html

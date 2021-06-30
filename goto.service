@@ -1,0 +1,8 @@
+[Unit]
+Description=URL shortener
+
+[Service]
+ExecStart=/usr/local/bin/goto-api --addr 127.0.0.1:50002 --database /etc/goto/database.yml --frontdir /etc/goto/dist/
+
+[Install]
+WantedBy=multi-user.target
