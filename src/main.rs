@@ -287,7 +287,7 @@ impl Cli {
                     .read(true)
                     .truncate(false)
                     .open(path.to_owned())
-                    .or_else(|err| Err(format!("{}", err)))?;
+                    .or_else(|err| Err(err.to_string()))?;
 
                 let mut buf = String::new();
                 match file.read_to_string(&mut buf) {
@@ -299,7 +299,7 @@ impl Cli {
                             let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&buf)
                                 .or_else(|err| Err(format!("parse data: {}", err)))?;
 
-                            Data::new(yaml_contents.into()).with_persistence(file)
+                            Data::new(yaml_contents).with_persistence(file)
                         }
                     }
                 }

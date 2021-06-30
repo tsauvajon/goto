@@ -5,7 +5,7 @@ build:
 build-cli:
 	cargo build --release --bin goto
 	mv target/release/goto /usr/local/bin/
-	goto --help 
+	goto --version
 
 build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
