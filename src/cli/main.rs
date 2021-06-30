@@ -34,13 +34,8 @@ impl<C: Client> Cli<C> {
             None => {
                 let location = self.client.get_long_url(self.args.shorturl).await?;
 
-                if !self.args.silent {
-                    println!("redirecting to {}", &location);
-                }
-
-                if !self.args.no_browser {
-                    webbrowser::open(&location).unwrap();
-                }
+                display_location(&location, self.args.silent, &mut std::io::stdout());
+                open_location(&location, !self.args.no_browser);
 
                 Ok(())
             }
@@ -48,8 +43,37 @@ impl<C: Client> Cli<C> {
     }
 }
 
+fn display_location(loc: &str, silent: bool, mut writer: impl std::io::Write) {
+    if !silent {
+        writeln!(writer, "redirecting to {}", loc).unwrap();
+    }
+}
+
+#[test]
+fn test_display_location_silent() {
+    let mut result = Vec::new();
+    display_location("hi there", true, &mut result);
+
+    assert_eq!(b"".to_vec(), result);
+}
+
+#[test]
+fn test_display_location_verbose() {
+    let mut result = Vec::new();
+    display_location("http://hi.there", false, &mut result);
+
+    assert_eq!(b"redirecting to http://hi.there\n".to_vec(), result,);
+}
+
 #[cfg(not(tarpaulin_include))]
+fn open_location(loc: &str, browser: bool) {
+    if browser {
+        webbrowser::open(loc).unwrap();
+    }
+}
+
 #[tokio::main]
+#[cfg(not(tarpaulin_include))]
 async fn main() -> Result<(), GoToError> {
     let args = Args::from_args();
     let url = match &args.api_url {

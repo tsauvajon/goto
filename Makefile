@@ -32,6 +32,7 @@ tarpaulin:
 		tarpaulin --exclude-files front/*
 
 coverage:
+	rm -rf coverage/
 	RUSTFLAGS="-Z instrument-coverage" \
 		LLVM_PROFILE_FILE="goto-%p-%m.profraw" \
 		cargo +nightly test
