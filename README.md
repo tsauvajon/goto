@@ -8,12 +8,6 @@ it to disk.
 
 2 clients are available for it, a front-end web interface and a CLI tool.
 
-CLI tool:
-![CLI tool demo](/demo-cli.gif)
-
-Front-end interface:
-![Front-end Demo](/demo-front.gif)
-
 ## Example usage
 
 ## API
@@ -32,6 +26,8 @@ Use `cargo run -- --help` for available options and their description.
 ## Clients
 
 ### CLI tool
+
+![CLI tool demo](/demo-cli.gif)
 
 Build it yourself:
 ```sh
@@ -57,21 +53,9 @@ goto hello
 goto hello --no-open-browser
 ```
 
-### HTTP Client
-
-You can query the API with any HTTP client.
-
-```sh
-# create a new shortened URL
-$ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
-/tsauvajon now redirects to https://linkedin.com/in/tsauvajon
-
-# browse it
-$ curl 127.0.0.1:8080/tsauvajon
-redirecting to https://linkedin.com/in/tsauvajon...
-```
-
 ### Web Front-End
+
+![Front-end Demo](/demo-front.gif)
 
 The front-end is designed to be served by the API, so make sure to have the API
 started and running.
@@ -85,3 +69,17 @@ $ echo http://127.0.0.1:8080/
 ```
 
 You can of course host the front-end somewhere else if you want.
+
+### HTTP Client
+
+You can also directly query the API with any HTTP client.
+
+```sh
+# create a new shortened URL
+$ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
+/tsauvajon now redirects to https://linkedin.com/in/tsauvajon
+
+# browse it
+$ curl 127.0.0.1:8080/tsauvajon
+redirecting to https://linkedin.com/in/tsauvajon...
+```
