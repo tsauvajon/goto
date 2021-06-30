@@ -15,7 +15,7 @@ build-cross: # todo: compress before sending
 	ssh pi -- sudo mv /home/pi/goto-api /usr/local/bin/goto-api
 	ssh pi -- sudo mkdir -p /etc/goto/dist
 	ssh pi -- sudo rm -rf /etc/goto/dist/*
-	ssh pi -- sudo mv /home/pi/goto-dist/* /etc/goto/dist/*
+	ssh pi -- sudo mv /home/pi/goto-dist/* /etc/goto/dist/
 	ssh pi -- sudo rm -r /home/pi/goto-dist
 	ssh pi -- sudo chown root:root /usr/local/bin/goto
 	ssh pi -- sudo chmod 755 /usr/local/bin/goto

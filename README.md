@@ -8,7 +8,11 @@ it to disk.
 
 2 clients are available for it, a front-end web interface and a CLI tool.
 
-![Demo](/demo.gif)
+CLI tool:
+![CLI tool demo](/demo-cli.gif)
+
+Front-end interface:
+![Front-end Demo](/demo-front.gif)
 
 ## Example usage
 
@@ -27,14 +31,42 @@ Use `cargo run -- --help` for available options and their description.
 
 ## Clients
 
+### CLI tool
+
+Build it yourself:
+```sh
+make build-cli
+goto --version
+```
+
+The first time you run the CLI, it will create its configuration at
+`$HOME/.goto/config.yml`. Feel free to edit it to change the defaults!
+
+Use it:
+```sh
+# show available options
+goto --help
+
+# create a new short URL
+goto hello http://world
+
+# browse this url, it will automatically open your web browser
+goto hello
+
+# display the URL but don't browse it
+goto hello --no-open-browser
+```
+
 ### HTTP Client
 
 You can query the API with any HTTP client.
 
 ```sh
+# create a new shortened URL
 $ curl -X POST 127.0.0.1:8080/tsauvajon -d "https://linkedin.com/in/tsauvajon"
 /tsauvajon now redirects to https://linkedin.com/in/tsauvajon
 
+# browse it
 $ curl 127.0.0.1:8080/tsauvajon
 redirecting to https://linkedin.com/in/tsauvajon...
 ```
@@ -52,11 +84,4 @@ $ make build
 $ echo http://127.0.0.1:8080/
 ```
 
-You can optionally serve the front-end with your own web server and routing
-strategy.
-
-### CLI tool
-
-```sh
-goto 
-```
+You can of course host the front-end somewhere else if you want.
