@@ -16,6 +16,7 @@ it to disk.
 cargo run
 
 # or
+
 cargo build --release
 target/release/goto-api
 ```
