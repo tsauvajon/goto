@@ -1,8 +1,8 @@
-# GoTo
+# Goto
 
 [![codecov](https://codecov.io/gh/tsauvajon/shorturl/branch/master/graph/badge.svg?token=EbP2Znh1m3)](https://codecov.io/gh/tsauvajon/shorturl)
 
-GoTo is a service designed to shorten URLs.  
+Goto is a service designed to shorten URLs.  
 It is an HTTP API server which stores data in-memory and can optionally persist
 it to disk.
 

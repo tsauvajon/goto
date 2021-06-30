@@ -9,7 +9,7 @@ target/debug/goto-api --addr ${ADDR} &
 
 cargo build --bin goto
 
-echo 'Waiting for the GoTo API to be up and running'
+echo 'Waiting for the Goto API to be up and running'
 for i in {1..20}
 do
     curl --silent --max-time 1 --fail ${ADDR}/ > /dev/null && break || echo 'not ready...'

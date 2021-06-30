@@ -29,7 +29,7 @@ impl Model {
 
         html! {
             <>
-                <h1>{ "Short URL" }</h1>
+                <h1>{ "Goto" }</h1>
                 <input type="text" placeholder="shortened_url" oninput=oninput_id value=self.id.clone() /><br />
                 <input type="text" placeholder="https://linkedin.com/in/tsauvajon/" oninput=oninput_target value=self.target.clone() />
                 <button onclick=self.link.callback(|_| Msg::Create())>

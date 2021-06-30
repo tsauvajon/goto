@@ -18,7 +18,7 @@ struct Args {
     #[structopt(help = "URL to shorten")]
     target: Option<String>,
 
-    #[structopt(long = "api", help = "Base URL of the GoTo API")]
+    #[structopt(long = "api", help = "Base URL of the Goto API")]
     api_url: Option<String>,
 
     #[structopt(short = "s", long = "silent", help = "Don't print redirections")]
