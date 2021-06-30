@@ -10,7 +10,7 @@ it to disk.
 
 ## Example usage
 
-## API
+## Server
 
 ```sh
 cargo run
