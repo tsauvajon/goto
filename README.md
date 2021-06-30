@@ -14,9 +14,13 @@ it to disk.
 
 ```sh
 cargo run
+
+# or
+cargo build --release
+target/release/goto-api
 ```
 
-With some options:
+Same thing, but with some options:
 ```sh
 cargo run -- --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/dist/
 ```
@@ -29,7 +33,7 @@ Use `cargo run -- --help` for available options and their description.
 
 ![CLI tool demo](/demo-cli.gif)
 
-Build it yourself:
+#### Build it yourself
 ```sh
 make build-cli
 goto --version
@@ -43,7 +47,8 @@ target/debug/goto --version
 The first time you run the CLI, it will create its configuration at
 `$HOME/.goto/config.yml`. Feel free to edit it to change the defaults!
 
-Use it:
+#### Use it
+
 ```sh
 # show available options
 goto --help
