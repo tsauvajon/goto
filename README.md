@@ -33,6 +33,11 @@ Build it yourself:
 ```sh
 make build-cli
 goto --version
+
+# OR
+
+cargo build --bin goto
+target/debug/goto --version
 ```
 
 The first time you run the CLI, it will create its configuration at
