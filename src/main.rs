@@ -48,7 +48,7 @@ use std::sync::RwLock;
 use structopt::StructOpt;
 use url::Url;
 
-const MAX_SIZE: usize = 1_024; // max payload size is 1k
+const MAX_SIZE: usize = 256; // max payload size is 256 Kb
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
 struct Data {
@@ -651,6 +651,24 @@ mod integration_tests {
             &Body::from("invalid request body: invalid utf-8 sequence of 1 bytes from index 1"),
             body
         );
+    }
+
+    #[actix_rt::test]
+    async fn integration_test_create_random_shortened_url_overflow() {
+        let req = test::TestRequest::post()
+            .uri("/toolong")
+            .set_payload(vec![b'a'; 2000])
+            .to_request();
+
+        let db: Db = Db::new(Data::new(HashMap::new()));
+
+        let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
+        let mut resp = test::call_service(&mut app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = resp.take_body();
+        let body = body.as_ref().unwrap();
+        assert_eq!(&Body::from("overflow"), body);
     }
 
     // follow an existing shorturl
