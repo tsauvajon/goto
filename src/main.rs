@@ -61,16 +61,16 @@ impl Data {
         self.data.get(key)
     }
 
-    fn contains_key(&self, key: &String) -> bool {
+    fn contains_key(&self, key: &str) -> bool {
         self.data.contains_key(key)
     }
 
-    fn insert(&mut self, key: String, value: String) -> Option<String> {
-        match self.data.insert(key.clone(), value.clone()) {
+    fn insert(&mut self, key: &str, value: &str) -> Option<String> {
+        match self.data.insert(key.to_string(), value.to_string()) {
             Some(existing_value) => Some(existing_value),
             None => {
                 if let Some(file) = &mut self.persistence {
-                    file.write_all(serialise_entry(key, value).as_bytes())
+                    file.write_all(serialise_entry(key.to_string(), value.to_string()).as_bytes())
                         .expect("persist new entry");
                 }
                 None
@@ -97,14 +97,14 @@ fn test_insert_data() {
 
     let dir = temp_dir();
     let tmpfile_path = format!("{}/tmpfile2.txt", dir.to_str().unwrap());
-    let file = File::create(tmpfile_path.clone()).unwrap();
+    let file = File::create(&tmpfile_path).unwrap();
 
     {
         let mut data = Data::new(HashMap::new()).with_persistence(file);
-        let outcome = data.insert("hi".to_string(), "qwerty".to_string());
+        let outcome = data.insert("hi", "qwerty");
         assert_eq!(None, outcome);
 
-        let outcome = data.insert("hi".to_string(), "zxcvbnm".to_string());
+        let outcome = data.insert("hi", "zxcvbnm");
         assert_eq!(Some("qwerty".to_string()), outcome);
     }
 
@@ -161,7 +161,7 @@ async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Res
         Ok(db) => match db.get(&id) {
             None => Err(error::ErrorNotFound("not found")),
             Some(url) => Ok(HttpResponse::Found()
-                .header("Location", url.clone())
+                .header("Location", url.to_string())
                 .body(format!("redirecting to {} ...", url))),
         },
         Err(err) => {
@@ -195,17 +195,13 @@ async fn read_target(mut payload: web::Payload) -> Result<String, String> {
 /// Create an short URL redirecting to a long URL.
 /// If you pass an `id` a parameter, your short URL will be /{id}.
 /// If you pass `None` instead, it will be /{hash of the target URL}.
-fn create_short_url(
-    db: web::Data<Db>,
-    target: String,
-    id: Option<String>,
-) -> Result<String, String> {
+fn create_short_url(db: web::Data<Db>, target: &str, id: Option<&str>) -> Result<String, String> {
     if let Err(err) = Url::parse(&target) {
         return Err(format!("malformed URL: {}", err));
     };
 
     let id = match id {
-        Some(id) => id,
+        Some(id) => id.to_string(),
         None => hash(&target),
     };
 
@@ -213,7 +209,7 @@ fn create_short_url(
     if db.contains_key(&id) {
         Err("already registered".to_string())
     } else {
-        db.insert(id.clone(), target.clone());
+        db.insert(&id, target);
         Ok(format!("/{} now redirects to {}", id, target))
     }
 }
@@ -229,7 +225,7 @@ async fn create_with_id(
         Err(err) => return Err(error::ErrorBadRequest(err)),
     };
 
-    create_short_url(db, target, Some(id)).or_else(|err| Err(error::ErrorBadRequest(err)))
+    create_short_url(db, &target, Some(id.as_str())).or_else(|err| Err(error::ErrorBadRequest(err)))
 }
 
 #[post("/")]
@@ -239,7 +235,7 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
         Err(err) => return Err(error::ErrorBadRequest(err)),
     };
 
-    create_short_url(db, target, None).or_else(|err| Err(error::ErrorBadRequest(err)))
+    create_short_url(db, &target, None).or_else(|err| Err(error::ErrorBadRequest(err)))
 }
 
 #[derive(StructOpt)]
@@ -392,7 +388,7 @@ mod cli_tests {
         let dir = temp_dir();
         let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
 
-        File::create(tmpfile_path.clone()).unwrap();
+        File::create(&tmpfile_path).unwrap();
 
         let cli = Cli {
             front_dist_directory: None,
@@ -414,7 +410,7 @@ mod cli_tests {
         let dir = temp_dir();
         let tmpfile_path = format!("{}/temporary-file.txt", dir.to_str().unwrap());
 
-        let mut file = File::create(tmpfile_path.clone()).unwrap();
+        let mut file = File::create(&tmpfile_path).unwrap();
         file.write_all(b"hello: \"http://world\"\n").unwrap();
 
         let cli = Cli {
@@ -438,7 +434,7 @@ mod cli_tests {
         let dir = temp_dir();
         let tmpfile_path = format!("{}/tmpfile1.txt", dir.to_str().unwrap());
 
-        let mut file = File::create(tmpfile_path.clone()).unwrap();
+        let mut file = File::create(&tmpfile_path).unwrap();
         file.write_all(b"ds;flsd'f sdl;flfs~~!./'' /sf/;dsf;lsdf")
             .unwrap();
 
@@ -469,14 +465,14 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .service(Files::new("/dist", front_dist_directory.clone()))
+            .service(Files::new("/dist", &front_dist_directory))
             .data(db.clone())
             .service(browse)
             .service(create_random)
             .service(create_with_id)
             // this doesn't do exactly what I need (just serve index.html
             //    on /), but I can't find a simple way of doing it.
-            .service(Files::new("/", front_dist_directory.clone()).index_file("index.html"))
+            .service(Files::new("/", &front_dist_directory).index_file("index.html"))
     })
     .bind(addr)?
     .run()
@@ -498,10 +494,10 @@ mod tests {
         let db: Db = Db::new(Data::new(HashMap::new()));
 
         let target = "this is not a valid URL".to_string();
-        let id = Some("hello".to_string());
+        let id = Some("hello");
         assert_eq!(
             Err("malformed URL: relative URL without a base".to_string()),
-            create_short_url(web::Data::new(db), target, id)
+            create_short_url(web::Data::new(db), &target, id)
         );
     }
 
@@ -510,8 +506,8 @@ mod tests {
         let db: Db = Db::new(Data::new(HashMap::new()));
 
         let target = "https://google.com".to_string();
-        let id = "hello".to_string();
-        create_short_url(web::Data::new(db.clone()), target.clone(), Some(id.clone())).unwrap();
+        let id = "hello";
+        create_short_url(web::Data::new(db.clone()), &target, Some(id)).unwrap();
 
         let db = db.read().unwrap();
         let got = db.get(&id).unwrap();
@@ -523,7 +519,7 @@ mod tests {
         let db: Db = Db::new(Data::new(HashMap::new()));
 
         let target = "https://google.com";
-        create_short_url(web::Data::new(db.clone()), target.to_string(), None).unwrap();
+        create_short_url(web::Data::new(db.clone()), target, None).unwrap();
 
         let id = hash(target);
         let db = db.read().unwrap();
@@ -533,13 +529,13 @@ mod tests {
 
     #[test]
     fn test_create_short_url_already_exists() {
-        let id = "hello".to_string();
+        let id = "hello";
 
         let mut db: HashMap<String, String> = HashMap::new();
-        db.insert(id.clone(), "some existing value".to_string());
+        db.insert(id.into(), "some existing value".into());
         let db: Db = Db::new(Data::new(db.into()));
 
-        let target = "https://google.com".to_string();
+        let target = "https://google.com";
         assert_eq!(
             Err("already registered".to_string()),
             create_short_url(web::Data::new(db), target, Some(id))
