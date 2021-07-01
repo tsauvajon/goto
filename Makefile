@@ -9,16 +9,21 @@ build-cli:
 
 build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
+	$(MAKE) deploy
+
+deploy:
 	scp target/arm-unknown-linux-musleabi/release/goto-api pi:/home/pi/goto-api
 	scp -r front/dist pi:/home/pi/goto-dist
+	scp goto.service pi:/home/pi/goto.service
 
 	ssh pi -- sudo mv /home/pi/goto-api /usr/local/bin/goto-api
 	ssh pi -- sudo mkdir -p /etc/goto/dist
 	ssh pi -- sudo rm -rf /etc/goto/dist/*
 	ssh pi -- sudo mv /home/pi/goto-dist/* /etc/goto/dist/
 	ssh pi -- sudo rm -r /home/pi/goto-dist
-	ssh pi -- sudo chown root:root /usr/local/bin/goto
-	ssh pi -- sudo chmod 755 /usr/local/bin/goto
+	ssh pi -- sudo chown root:root /usr/local/bin/goto-api
+	ssh pi -- sudo chmod 755 /usr/local/bin/goto-api
+	ssh pi -- sudo mv /home/pi/goto.service /etc/systemd/system/goto.service
 	ssh pi -- sudo systemctl restart goto.service
 	ssh pi -- sudo journalctl -u goto.service
 

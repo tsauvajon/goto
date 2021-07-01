@@ -36,7 +36,7 @@ Use `cargo run -- --help` for available options and their description.
 
 #### Build it yourself
 ```sh
-make build-cli
+make build-cli # build for release and move to /usr/local/bin/goto
 goto --version
 
 # OR
