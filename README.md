@@ -1,6 +1,6 @@
 # Goto
 
-[![codecov](https://codecov.io/gh/tsauvajon/shorturl/branch/master/graph/badge.svg?token=EbP2Znh1m3)](https://codecov.io/gh/tsauvajon/shorturl)
+[![codecov](https://codecov.io/gh/tsauvajon/goto/branch/master/graph/badge.svg?token=998InbDC0M)](https://codecov.io/gh/tsauvajon/goto)
 
 Goto is a service designed to shorten URLs.  
 It is an HTTP API server which stores data in-memory and can optionally persist
