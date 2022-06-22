@@ -160,7 +160,7 @@ checksum = "bc7d7cd957c9ed92288a7c3c96af81fa5291f65247a76a34dac7b6af74e52ba0"
 dependencies = [
  "actix-macros 0.2.0",
  "futures-core",
- "tokio 1.6.0",
+ "tokio 1.8.4",
 ]
 
 [[package]]
@@ -1230,7 +1230,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "structopt",
- "tokio 1.6.0",
+ "tokio 1.8.4",
  "url",
  "webbrowser",
 ]
@@ -1269,7 +1269,7 @@ dependencies = [
  "http",
  "indexmap",
  "slab",
- "tokio 1.6.0",
+ "tokio 1.8.4",
  "tokio-util 0.6.7",
  "tracing",
 ]
@@ -1376,7 +1376,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_regex",
- "tokio 1.6.0",
+ "tokio 1.8.4",
 ]
 
 [[package]]
@@ -1397,7 +1397,7 @@ dependencies = [
  "itoa",
  "pin-project-lite 0.2.6",
  "socket2 0.4.0",
- "tokio 1.6.0",
+ "tokio 1.8.4",
  "tower-service",
  "tracing",
  "want",
@@ -2582,9 +2582,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.6.0"
+version = "1.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd3076b5c8cc18138b8f8814895c11eb4de37114a5d127bafdc5e55798ceef37"
+checksum = "50dae83881bc9b0403dd5b44ea9deed3e939856cc8722d5be37f0d6e5c6d53dd"
 dependencies = [
  "autocfg",
  "bytes 1.0.1",
@@ -2636,7 +2636,7 @@ dependencies = [
  "futures-sink",
  "log",
  "pin-project-lite 0.2.6",
- "tokio 1.6.0",
+ "tokio 1.8.4",
 ]
 
 [[package]]
