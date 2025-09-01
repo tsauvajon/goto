@@ -3,6 +3,11 @@ name = "goto"
 version = "2.0.0"
 edition = "2018"
 default-run = "goto-api"
+repository = "https://github.com/tsauvajon/goto"
+keywords = ["url-shortener"]
+categories = ["command-line-utilities"]
+license = "MIT"
+description = "URL shortener with an API, a CLI and a Frontend"
 
 [dependencies]
 actix-files = "0.5"

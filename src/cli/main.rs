@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use home;
+use home::home_dir;
 use hyper::{Client as HyperClient, Uri};
-use serde;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use structopt::StructOpt;
-use webbrowser;
 
 const DEFAULT_API_URL: &str = "http://127.0.0.1:8080";
 
@@ -43,7 +42,7 @@ impl From<actix_web::http::uri::InvalidUri> for GoToError {
 
 impl From<std::string::FromUtf8Error> for GoToError {
     fn from(error: std::string::FromUtf8Error) -> Self {
-        GoToError::ApiError(format!("expected utf8: {}", error.to_string()))
+        GoToError::ApiError(format!("expected utf8: {error}"))
     }
 }
 
@@ -224,7 +223,7 @@ impl<C: Client> Cli<C> {
 
 fn display_location(loc: &str, verbose: bool, mut writer: impl std::io::Write) {
     if verbose {
-        writeln!(writer, "redirecting to {}", loc).unwrap();
+        writeln!(writer, "redirecting to {loc}").unwrap();
     }
 }
 
@@ -251,7 +250,7 @@ fn open_location(loc: &str, browser: bool) {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct Config {
     api_url: Option<String>,
     silent: Option<bool>,
@@ -267,7 +266,7 @@ fn open_or_create_config(filepath: &PathBuf) -> Result<Config, GoToError> {
         .read(true)
         .truncate(false)
         .open(filepath)
-        .or_else(|err| Err(GoToError::CliError(format!("open config file: {}", err))))?;
+        .map_err(|err| GoToError::CliError(format!("open config file: {err}")))?;
 
     read_or_write_config(file)
 }
@@ -277,7 +276,7 @@ fn read_or_write_config(
 ) -> Result<Config, GoToError> {
     let mut buf = String::new();
     match file.read_to_string(&mut buf) {
-        Err(err) => Err(GoToError::CliError(format!("read config file: {}", err))),
+        Err(err) => Err(GoToError::CliError(format!("read config file: {err}"))),
         Ok(len) => {
             if len == 0 {
                 let default = Config {
@@ -287,18 +286,12 @@ fn read_or_write_config(
                 };
 
                 file.write_all(serde_yaml::to_string(&default).unwrap().as_bytes())
-                    .or_else(|err| {
-                        Err(GoToError::CliError(format!(
-                            "write default config: {}",
-                            err
-                        )))
-                    })?;
+                    .map_err(|err| GoToError::CliError(format!("write default config: {err}",)))?;
 
                 Ok(default)
             } else {
-                let yaml_contents = serde_yaml::from_str(&buf).or_else(|err| {
-                    Err(GoToError::CliError(format!("parse config data: {}", err)))
-                })?;
+                let yaml_contents = serde_yaml::from_str(&buf)
+                    .map_err(|err| GoToError::CliError(format!("parse config data: {err}")))?;
 
                 Ok(yaml_contents)
             }
@@ -472,7 +465,7 @@ mod cant_read_config_tests {}
 async fn main() -> Result<(), GoToError> {
     let args = Args::from_args();
 
-    let mut filepath = home::home_dir().unwrap();
+    let mut filepath = home_dir().unwrap();
     filepath.push(".goto");
     filepath.push("config.yml");
 
@@ -749,12 +742,12 @@ impl Client for HttpClient {
             .method(Method::POST)
             .uri(uri)
             .body(Body::from(target))
-            .or_else(|err| Err(GoToError::CliError(err.to_string())))?;
+            .map_err(|err| GoToError::CliError(err.to_string()))?;
 
         let resp = client
             .request(req)
             .await
-            .or_else(|err| Err(GoToError::ApiError(err.to_string())))?;
+            .map_err(|err| GoToError::ApiError(err.to_string()))?;
 
         let is_server_error = resp.status().is_server_error();
         let is_client_error = resp.status().is_client_error();
@@ -780,7 +773,7 @@ impl Client for HttpClient {
         let resp = client
             .get(uri)
             .await
-            .or_else(|err| Err(GoToError::ApiError(err.to_string())))?;
+            .map_err(|err| GoToError::ApiError(err.to_string()))?;
 
         if !resp.status().is_redirection() {
             let is_server_error = resp.status().is_server_error();

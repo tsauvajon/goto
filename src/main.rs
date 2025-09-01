@@ -124,8 +124,8 @@ impl Db {
     fn read(
         &self,
     ) -> Result<
-        std::sync::RwLockReadGuard<Data>,
-        std::sync::PoisonError<std::sync::RwLockReadGuard<Data>>,
+        std::sync::RwLockReadGuard<'_, Data>,
+        std::sync::PoisonError<std::sync::RwLockReadGuard<'_, Data>>,
     > {
         self.data.read()
     }
@@ -133,8 +133,8 @@ impl Db {
     fn write(
         &self,
     ) -> Result<
-        std::sync::RwLockWriteGuard<Data>,
-        std::sync::PoisonError<std::sync::RwLockWriteGuard<Data>>,
+        std::sync::RwLockWriteGuard<'_, Data>,
+        std::sync::PoisonError<std::sync::RwLockWriteGuard<'_, Data>>,
     > {
         self.data.write()
     }
@@ -150,7 +150,7 @@ impl Db {
 /// a new YAML line, that can be added to an existing
 /// database.
 fn serialise_entry(key: String, value: String) -> String {
-    format!("{}: \"{}\"\n", key, value)
+    format!("{key}: \"{value}\"\n")
 }
 
 /// browse redirects to the long URL hidden behind a short URL, or returns a
@@ -162,10 +162,10 @@ async fn browse(db: web::Data<Db>, web::Path(id): web::Path<String>) -> impl Res
             None => Err(error::ErrorNotFound("not found")),
             Some(url) => Ok(HttpResponse::Found()
                 .header("Location", url.to_string())
-                .body(format!("redirecting to {} ...", url))),
+                .body(format!("redirecting to {url} ..."))),
         },
         Err(err) => {
-            println!("accessing the db: {}", err);
+            println!("accessing the db: {err}");
             Err(error::ErrorInternalServerError(err.to_string()))
         }
     }
@@ -180,7 +180,7 @@ fn hash(input: &str) -> String {
 async fn read_target(mut payload: web::Payload) -> Result<String, String> {
     let mut body = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
-        let chunk = chunk.or_else(|err| Err(err.to_string()))?;
+        let chunk = chunk.map_err(|err| err.to_string())?;
         // limit max size of in-memory payload
         if (body.len() + chunk.len()) > MAX_SIZE {
             return Err("overflow".to_string());
@@ -188,21 +188,20 @@ async fn read_target(mut payload: web::Payload) -> Result<String, String> {
         body.extend_from_slice(&chunk);
     }
 
-    String::from_utf8(body[..].to_vec())
-        .or_else(|err| Err(format!("invalid request body: {}", err)))
+    String::from_utf8(body[..].to_vec()).map_err(|err| format!("invalid request body: {err}"))
 }
 
 /// Create an short URL redirecting to a long URL.
 /// If you pass an `id` a parameter, your short URL will be /{id}.
 /// If you pass `None` instead, it will be /{hash of the target URL}.
 fn create_short_url(db: web::Data<Db>, target: &str, id: Option<&str>) -> Result<String, String> {
-    if let Err(err) = Url::parse(&target) {
-        return Err(format!("malformed URL: {}", err));
+    if let Err(err) = Url::parse(target) {
+        return Err(format!("malformed URL: {err}"));
     };
 
     let id = match id {
         Some(id) => id.to_string(),
-        None => hash(&target),
+        None => hash(target),
     };
 
     let mut db = db.write().unwrap();
@@ -210,7 +209,7 @@ fn create_short_url(db: web::Data<Db>, target: &str, id: Option<&str>) -> Result
         Err("already registered".to_string())
     } else {
         db.insert(&id, target);
-        Ok(format!("/{} now redirects to {}", id, target))
+        Ok(format!("/{id} now redirects to {target}"))
     }
 }
 
@@ -225,7 +224,7 @@ async fn create_with_id(
         Err(err) => return Err(error::ErrorBadRequest(err)),
     };
 
-    create_short_url(db, &target, Some(id.as_str())).or_else(|err| Err(error::ErrorBadRequest(err)))
+    create_short_url(db, &target, Some(id.as_str())).map_err(error::ErrorBadRequest)
 }
 
 #[post("/")]
@@ -235,7 +234,7 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
         Err(err) => return Err(error::ErrorBadRequest(err)),
     };
 
-    create_short_url(db, &target, None).or_else(|err| Err(error::ErrorBadRequest(err)))
+    create_short_url(db, &target, None).map_err(error::ErrorBadRequest)
 }
 
 #[derive(StructOpt)]
@@ -282,8 +281,8 @@ impl Cli {
                     .create(true)
                     .read(true)
                     .truncate(false)
-                    .open(path.to_owned())
-                    .or_else(|err| Err(err.to_string()))?;
+                    .open(path)
+                    .map_err(|err| err.to_string())?;
 
                 let mut buf = String::new();
                 match file.read_to_string(&mut buf) {
@@ -293,7 +292,7 @@ impl Cli {
                             Data::new(HashMap::new()).with_persistence(file)
                         } else {
                             let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&buf)
-                                .or_else(|err| Err(format!("parse data: {}", err)))?;
+                                .map_err(|err| format!("parse data: {err}"))?;
 
                             Data::new(yaml_contents).with_persistence(file)
                         }
