@@ -73,35 +73,15 @@ struct CliOptions {
 impl CliOptions {
     fn new(args: &Args, config: &Config) -> CliOptions {
         let always_replace = args.force_replace || config.force_replace.is_some_and(identity);
-
-        // TODO rewrite this
-        let verbose = if !args.silent {
-            if let Some(force_silent) = config.silent {
-                !force_silent
-            } else {
-                !args.silent
-            }
-        } else {
-            !args.silent
-        };
-
-        // TODO rewrite this
-        let open_browser = if !args.no_browser {
-            if let Some(force_no_browser) = config.no_browser {
-                !force_no_browser
-            } else {
-                !args.no_browser
-            }
-        } else {
-            !args.no_browser
-        };
+        let silent = args.silent || config.silent.is_some_and(identity);
+        let no_browser = args.no_browser || config.no_browser.is_some_and(identity);
 
         CliOptions {
             shorturl: args.shorturl.to_owned(),
             target: args.target.to_owned(),
             always_replace,
-            verbose,
-            open_browser,
+            verbose: !silent,
+            open_browser: !no_browser,
         }
     }
 }
