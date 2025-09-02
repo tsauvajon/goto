@@ -353,7 +353,7 @@ mod cli_tests {
         let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
-        assert_eq!(true, data.persistence.is_none());
+        assert!(data.persistence.is_none());
     }
 
     #[test]
@@ -370,13 +370,11 @@ mod cli_tests {
         let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
-        match &data.persistence {
-            None => panic!("expected persistence"),
-            Some(file) => {
-                let metadata = file.metadata().unwrap();
-                assert_eq!(true, metadata.is_file());
-            }
-        };
+        assert!(matches!(
+            &data.persistence,
+            Some(file)
+                if file.metadata().unwrap().is_file()
+        ));
     }
 
     #[test]
@@ -397,7 +395,7 @@ mod cli_tests {
         let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
-        assert_eq!(true, data.persistence.is_some());
+        assert!(data.persistence.is_some());
     }
 
     #[test]
@@ -420,8 +418,8 @@ mod cli_tests {
         let db = cli.open_db().unwrap();
         let data = db.read().unwrap();
 
-        assert_eq!(true, data.persistence.is_some());
-        assert_eq!(Some(&"http://world".to_string()), data.data.get("hello"));
+        assert!(data.persistence.is_some());
+        assert_eq!(data.data.get("hello"), Some(&"http://world".to_string()));
     }
 
     #[test]
@@ -444,10 +442,7 @@ mod cli_tests {
         };
 
         let res = cli.open_db();
-        assert_eq!(true, res.is_err());
-        if let Err(msg) = res {
-            assert_eq!(true, msg.contains("parse data: invalid type:"));
-        }
+        assert!(matches!(res, Err(err) if err.contains("parse data: invalid type:")));
     }
 }
 
@@ -509,7 +504,7 @@ mod tests {
         create_short_url(web::Data::new(db.clone()), &target, Some(id)).unwrap();
 
         let db = db.read().unwrap();
-        let got = db.get(&id).unwrap();
+        let got = db.get(id).unwrap();
         assert_eq!(&target, got);
     }
 
@@ -532,7 +527,7 @@ mod tests {
 
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert(id.into(), "some existing value".into());
-        let db: Db = Db::new(Database::new(db.into()));
+        let db: Db = Db::new(Database::new(db));
 
         let target = "https://google.com";
         assert_eq!(
@@ -543,10 +538,9 @@ mod tests {
 
     #[test]
     fn test_read_database() {
-        extern crate serde_yaml;
         let data = "hello: http://hello-world.com\nkey2: value2";
 
-        let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&data).unwrap();
+        let yaml_contents: HashMap<String, String> = serde_yaml::from_str(data).unwrap();
         println!("{:?}", yaml_contents);
     }
 
@@ -559,7 +553,6 @@ mod tests {
     // On the other hand, if we wanted to write the entire database every
     // time, it would work well.
     fn test_write_database() {
-        extern crate serde_yaml;
         let mut database: HashMap<String, String> = HashMap::new();
         database.insert(
             "tsauvajon".to_string(),
@@ -594,13 +587,13 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::new(db.clone()))
                 .service(create_with_id),
         )
         .await;
-        let resp = test::call_service(&mut app, req).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let db = db.read().unwrap();
@@ -618,13 +611,13 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::new(db.clone()))
                 .service(create_random),
         )
         .await;
-        let resp = test::call_service(&mut app, req).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let db = db.read().unwrap();
@@ -644,13 +637,13 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::new(db.clone()))
                 .service(create_random),
         )
         .await;
-        let resp = test::call_service(&mut app, req).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let body = resp.into_body().try_into_bytes().unwrap();
@@ -669,13 +662,13 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(
+        let app = test::init_service(
             App::new()
                 .app_data(Data::new(db.clone()))
                 .service(create_with_id),
         )
         .await;
-        let resp = test::call_service(&mut app, req).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let body = resp.into_body().try_into_bytes().unwrap();
@@ -690,10 +683,10 @@ mod integration_tests {
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
 
-        let db: Db = Db::new(Database::new(db.into()));
+        let db: Db = Db::new(Database::new(db));
 
-        let mut app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
-        let resp = test::call_service(&mut app, req).await;
+        let app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::FOUND);
 
         assert_eq!(
@@ -712,7 +705,7 @@ mod integration_tests {
         let req = test::TestRequest::get().uri("/hi").to_request();
         let mut db: HashMap<String, String> = HashMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
-        let db: Db = Db::new(Database::new(db.into()));
+        let db: Db = Db::new(Database::new(db));
 
         let _result = panic::catch_unwind(|| {
             panic::set_hook(Box::new(|_info| {
@@ -730,8 +723,8 @@ mod integration_tests {
 
         let _ = panic::take_hook(); // remove the panic hook that mutes panics
 
-        let mut app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
-        let resp = test::call_service(&mut app, req).await;
+        let app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let body = resp.into_body().try_into_bytes().unwrap();
@@ -747,8 +740,8 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
-        let resp = test::call_service(&mut app, req).await;
+        let app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         assert_eq!(resp.headers().get("Location"), None);
@@ -771,10 +764,10 @@ mod integration_tests {
             "https://github.com/tsauvajon".into(),
         );
 
-        let db: Db = Db::new(Database::new(db.into()));
-        let mut app =
+        let db: Db = Db::new(Database::new(db));
+        let app =
             test::init_service(App::new().app_data(Data::new(db)).service(create_with_id)).await;
-        let resp = test::call_service(&mut app, req).await;
+        let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let body = resp.into_body().try_into_bytes().unwrap();

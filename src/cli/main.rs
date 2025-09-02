@@ -115,36 +115,36 @@ mod test_cli_options {
         args.no_browser = false;
         config.no_browser = None;
         let got = CliOptions::new(&args, &config);
-        assert_eq!(true, got.open_browser);
+        assert!(got.open_browser);
 
         // both args and config agree
         args.no_browser = true;
         config.no_browser = Some(true);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.open_browser);
+        assert!(!got.open_browser);
 
         args.no_browser = false;
         config.no_browser = Some(false);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(true, got.open_browser);
+        assert!(got.open_browser);
 
         // args take precendence over config
         args.no_browser = true;
         config.no_browser = Some(false);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.open_browser);
+        assert!(!got.open_browser);
 
         // only args
         args.no_browser = true;
         config.no_browser = None;
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.open_browser);
+        assert!(!got.open_browser);
 
         // only config
         args.no_browser = false;
         config.no_browser = Some(true);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.open_browser);
+        assert!(!got.open_browser);
     }
 
     #[test]
@@ -167,36 +167,36 @@ mod test_cli_options {
         args.silent = false;
         config.silent = None;
         let got = CliOptions::new(&args, &config);
-        assert_eq!(true, got.verbose);
+        assert!(got.verbose);
 
         // both args and config agree
         args.silent = true;
         config.silent = Some(true);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.verbose);
+        assert!(!got.verbose);
 
         args.silent = false;
         config.silent = Some(false);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(true, got.verbose);
+        assert!(got.verbose);
 
         // args take precendence over config
         args.silent = true;
         config.silent = Some(false);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.verbose);
+        assert!(!got.verbose);
 
         // only args
         args.silent = true;
         config.silent = None;
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.verbose);
+        assert!(!got.verbose);
 
         // only config
         args.silent = false;
         config.silent = Some(true);
         let got = CliOptions::new(&args, &config);
-        assert_eq!(false, got.verbose);
+        assert!(!got.verbose);
     }
 }
 
@@ -303,7 +303,7 @@ fn read_or_write_config(
 mod config_tests {
     use std::env::temp_dir;
     use std::fs::File;
-    use std::io::{Cursor, Error, ErrorKind, Read, Result, Write};
+    use std::io::{Cursor, Error, Read, Result, Write};
 
     use super::*;
 
@@ -404,7 +404,7 @@ mod config_tests {
 
     impl std::io::Read for RWMockCantRead {
         fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
-            Err(Error::new(ErrorKind::Other, "oh no!"))
+            Err(Error::other("oh no!"))
         }
     }
 
@@ -437,7 +437,7 @@ mod config_tests {
 
     impl std::io::Write for RWMockCantWrite {
         fn write(&mut self, _buf: &[u8]) -> Result<usize> {
-            Err(Error::new(ErrorKind::Other, "that went terribly wrong!"))
+            Err(Error::other("that went terribly wrong!"))
         }
 
         fn flush(&mut self) -> Result<()> {
@@ -882,7 +882,7 @@ mod http_client_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::POST).path("/qqqqq");
 
-            then.status(500).body(&[0, 159, 146, 150]);
+            then.status(500).body([0, 159, 146, 150]);
         });
 
         let client = HttpClient::new(server.base_url());
@@ -987,7 +987,7 @@ mod http_client_tests {
         let mock = server.mock(|when, then| {
             when.method(Method::GET).path("/shorturl4");
 
-            then.status(500).body(&[0, 159, 146, 150]);
+            then.status(500).body([0, 159, 146, 150]);
         });
 
         let client = HttpClient::new(server.base_url());
