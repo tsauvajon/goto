@@ -40,7 +40,7 @@ redirecting to https://linkedin.com/in/tsauvajon ...* Closing connection 0
 
 use actix_files::Files;
 use actix_web::web::Data;
-use actix_web::{error, get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{error, get, post, put, web, App, HttpResponse, HttpServer, Responder};
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -60,10 +60,6 @@ struct Database {
 impl Database {
     fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
-    }
-
-    fn contains_key(&self, key: &str) -> bool {
-        self.data.contains_key(key)
     }
 
     fn insert(&mut self, key: &str, value: &str) -> Option<String> {
@@ -193,24 +189,48 @@ async fn read_target(mut payload: web::Payload) -> Result<String, String> {
     String::from_utf8(body[..].to_vec()).map_err(|err| format!("invalid request body: {err}"))
 }
 
+enum UpsertShortUrlCommand {
+    CreateShortUrl { id: Option<String> },
+    UpdateShortUrl { id: String },
+}
+
 /// Create an short URL redirecting to a long URL.
-/// If you pass an `id` a parameter, your short URL will be /{id}.
-/// If you pass `None` instead, it will be /{hash of the target URL}.
-fn create_short_url(db: web::Data<Db>, target: &str, id: Option<&str>) -> Result<String, String> {
+///
+/// If you pass an `id` a parameter, your short URL will be` /{id}`.
+///
+/// If you pass `None` instead, it will be `/{hash of the target URL}`.
+///
+/// You can also update an existing short URL by id. It will replace
+/// the existing target URL at `/{id}`.
+fn upsert_short_url(
+    db: web::Data<Db>,
+    target: &str,
+    command: UpsertShortUrlCommand,
+) -> Result<String, String> {
     if let Err(err) = Url::parse(target) {
         return Err(format!("malformed URL: {err}"));
     };
 
-    let id = match id {
-        Some(id) => id.to_string(),
-        None => hash(target),
+    let id = match &command {
+        UpsertShortUrlCommand::CreateShortUrl { id: Some(id) }
+        | UpsertShortUrlCommand::UpdateShortUrl { id } => id,
+        UpsertShortUrlCommand::CreateShortUrl { id: None } => &hash(target),
     };
 
     let mut db = db.write().unwrap();
-    if db.contains_key(&id) {
-        Err("already registered".to_string())
+    let previous_target = db.get(id).cloned();
+    if let Some(previous_target) = previous_target {
+        match command {
+            UpsertShortUrlCommand::CreateShortUrl { .. } => Err("already registered".to_string()),
+            UpsertShortUrlCommand::UpdateShortUrl { .. } => {
+                db.insert(id, target);
+                Ok(format!(
+                    "/{id} now redirects to {target} (was {previous_target})"
+                ))
+            }
+        }
     } else {
-        db.insert(&id, target);
+        db.insert(id, target);
         Ok(format!("/{id} now redirects to {target}"))
     }
 }
@@ -224,7 +244,21 @@ async fn create_with_id(
     let (id,) = path.into_inner();
     let target = read_target(payload).await.map_err(error::ErrorBadRequest)?;
 
-    create_short_url(db, &target, Some(id.as_str())).map_err(error::ErrorBadRequest)
+    let command = UpsertShortUrlCommand::CreateShortUrl { id: Some(id) };
+    upsert_short_url(db, &target, command).map_err(error::ErrorBadRequest)
+}
+
+#[put("/{id}")]
+async fn update_with_id(
+    db: web::Data<Db>,
+    payload: web::Payload,
+    path: web::Path<(String,)>,
+) -> impl Responder {
+    let (id,) = path.into_inner();
+    let target = read_target(payload).await.map_err(error::ErrorBadRequest)?;
+
+    let command = UpsertShortUrlCommand::UpdateShortUrl { id };
+    upsert_short_url(db, &target, command).map_err(error::ErrorBadRequest)
 }
 
 #[post("/")]
@@ -234,7 +268,8 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
         Err(err) => return Err(error::ErrorBadRequest(err)),
     };
 
-    create_short_url(db, &target, None).map_err(error::ErrorBadRequest)
+    let command = UpsertShortUrlCommand::CreateShortUrl { id: None };
+    upsert_short_url(db, &target, command).map_err(error::ErrorBadRequest)
 }
 
 #[derive(StructOpt)]
@@ -464,6 +499,7 @@ async fn main() -> std::io::Result<()> {
             .service(browse)
             .service(create_random)
             .service(create_with_id)
+            .service(update_with_id)
             // this doesn't do exactly what I need (just serve index.html
             //    on /), but I can't find a simple way of doing it.
             .service(Files::new("/", &front_dist_directory).index_file("index.html"))
@@ -488,10 +524,12 @@ mod tests {
         let db: Db = Db::new(Database::new(HashMap::new()));
 
         let target = "this is not a valid URL".to_string();
-        let id = Some("hello");
+        let command = UpsertShortUrlCommand::CreateShortUrl {
+            id: Some("hello".to_string()),
+        };
         assert_eq!(
             Err("malformed URL: relative URL without a base".to_string()),
-            create_short_url(web::Data::new(db), &target, id)
+            upsert_short_url(web::Data::new(db), &target, command)
         );
     }
 
@@ -501,7 +539,10 @@ mod tests {
 
         let target = "https://google.com".to_string();
         let id = "hello";
-        create_short_url(web::Data::new(db.clone()), &target, Some(id)).unwrap();
+        let command = UpsertShortUrlCommand::CreateShortUrl {
+            id: Some(id.to_string()),
+        };
+        upsert_short_url(web::Data::new(db.clone()), &target, command).unwrap();
 
         let db = db.read().unwrap();
         let got = db.get(id).unwrap();
@@ -513,7 +554,8 @@ mod tests {
         let db: Db = Db::new(Database::new(HashMap::new()));
 
         let target = "https://google.com";
-        create_short_url(web::Data::new(db.clone()), target, None).unwrap();
+        let command = UpsertShortUrlCommand::CreateShortUrl { id: None };
+        upsert_short_url(web::Data::new(db.clone()), target, command).unwrap();
 
         let id = hash(target);
         let db = db.read().unwrap();
@@ -530,9 +572,42 @@ mod tests {
         let db: Db = Db::new(Database::new(db));
 
         let target = "https://google.com";
+        let command = UpsertShortUrlCommand::CreateShortUrl {
+            id: Some(id.to_string()),
+        };
         assert_eq!(
             Err("already registered".to_string()),
-            create_short_url(web::Data::new(db), target, Some(id))
+            upsert_short_url(web::Data::new(db), target, command)
+        );
+    }
+
+    #[test]
+    fn test_update_existing_url() {
+        let id = "hello";
+        let mut db: HashMap<String, String> = HashMap::new();
+        db.insert(id.into(), "https://google.com".into());
+        let db: Db = Db::new(Database::new(db));
+
+        // Replace with hello -> yahoo.com
+        let target = "https://yahoo.com";
+        let command = UpsertShortUrlCommand::UpdateShortUrl { id: id.to_string() };
+        let result = upsert_short_url(Data::new(db), target, command);
+        assert_eq!(
+            result,
+            Ok("/hello now redirects to https://yahoo.com (was https://google.com)".to_string())
+        )
+    }
+
+    #[test]
+    fn test_update_url_that_does_not_exist() {
+        let id = "hello";
+        let db: Db = Db::new(Database::new(HashMap::new()));
+
+        let target = "https://google.com";
+        let command = UpsertShortUrlCommand::UpdateShortUrl { id: id.to_string() };
+        assert_eq!(
+            Ok("/hello now redirects to https://google.com".to_string()),
+            upsert_short_url(web::Data::new(db), target, command)
         );
     }
 
@@ -591,6 +666,33 @@ mod integration_tests {
             App::new()
                 .app_data(Data::new(db.clone()))
                 .service(create_with_id),
+        )
+        .await;
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let db = db.read().unwrap();
+        assert_eq!(db.get("hello"), Some(&"https://hello.world".to_string()));
+        assert_eq!(db.get("wwerwewrew"), None);
+    }
+
+    // update an existing custom shorturl
+    #[actix_rt::test]
+    async fn integration_test_update_shortened_url() {
+        let req = test::TestRequest::put()
+            .uri("/hello")
+            .set_payload("https://hello.world")
+            .to_request();
+
+        let db: Db = Db::new(Database::new(HashMap::from([(
+            "hello".to_string(),
+            "https://google.com".to_string(),
+        )])));
+
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(db.clone()))
+                .service(update_with_id),
         )
         .await;
         let resp = test::call_service(&app, req).await;
