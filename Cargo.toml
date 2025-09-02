@@ -26,7 +26,7 @@ webbrowser = "0.5.5"
 
 [dev-dependencies]
 actix-rt = "2.2"
-httpmock = "0.5"
+httpmock = "0.7"
 
 [[bin]]
 name = "goto-api"
