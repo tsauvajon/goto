@@ -972,6 +972,24 @@ mod http_client_tests {
     }
 
     #[actix_rt::test]
+    async fn test_update_url() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::PUT).path("/sdfsdf");
+
+            then.status(200).body("ok!!");
+        });
+
+        let client = HttpClient::new(server.base_url());
+        client
+            .update_url("sdfsdf".to_string(), "http://target.com".to_string())
+            .await
+            .unwrap();
+
+        mock.assert();
+    }
+
+    #[actix_rt::test]
     async fn test_create_new_client_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
