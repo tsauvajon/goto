@@ -580,11 +580,9 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use actix_web::{
-        body::Body,
-        http::{HeaderValue, StatusCode},
-        test,
-    };
+    use actix_web::body::MessageBody;
+    use actix_web::http::header::HeaderValue;
+    use actix_web::{http::StatusCode, test};
 
     // create a new custom shorturl
     #[actix_rt::test]
@@ -596,7 +594,12 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
+        let mut app = test::init_service(
+            App::new()
+                .app_data(Data::new(db.clone()))
+                .service(create_with_id),
+        )
+        .await;
         let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
@@ -615,7 +618,12 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
+        let mut app = test::init_service(
+            App::new()
+                .app_data(Data::new(db.clone()))
+                .service(create_random),
+        )
+        .await;
         let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
@@ -636,14 +644,18 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().data(db.clone()).service(create_random)).await;
-        let mut resp = test::call_service(&mut app, req).await;
+        let mut app = test::init_service(
+            App::new()
+                .app_data(Data::new(db.clone()))
+                .service(create_random),
+        )
+        .await;
+        let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-        let body = resp.take_body();
-        let body = body.as_ref().unwrap();
+        let body = resp.into_body().try_into_bytes().unwrap();
         assert_eq!(
-            &Body::from("invalid request body: invalid utf-8 sequence of 1 bytes from index 1"),
+            "invalid request body: invalid utf-8 sequence of 1 bytes from index 1",
             body
         );
     }
@@ -657,13 +669,17 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().data(db.clone()).service(create_with_id)).await;
-        let mut resp = test::call_service(&mut app, req).await;
+        let mut app = test::init_service(
+            App::new()
+                .app_data(Data::new(db.clone()))
+                .service(create_with_id),
+        )
+        .await;
+        let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-        let body = resp.take_body();
-        let body = body.as_ref().unwrap();
-        assert_eq!(&Body::from("overflow"), body);
+        let body = resp.into_body().try_into_bytes().unwrap();
+        assert_eq!("overflow", body);
     }
 
     // follow an existing shorturl
@@ -676,21 +692,17 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(db.into()));
 
-        let mut app = test::init_service(App::new().data(db).service(browse)).await;
-        let mut resp = test::call_service(&mut app, req).await;
+        let mut app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
+        let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::FOUND);
-
-        let body = resp.take_body();
-        let body = body.as_ref().unwrap();
-        assert_eq!(
-            &Body::from("redirecting to https://linkedin.com/in/tsauvajon ..."),
-            body
-        );
 
         assert_eq!(
             resp.headers().get("Location"),
             Some(&HeaderValue::from_str("https://linkedin.com/in/tsauvajon").unwrap())
-        )
+        );
+
+        let body = resp.into_body().try_into_bytes().unwrap();
+        assert_eq!("redirecting to https://linkedin.com/in/tsauvajon ...", body);
     }
 
     #[actix_rt::test]
@@ -718,16 +730,12 @@ mod integration_tests {
 
         let _ = panic::take_hook(); // remove the panic hook that mutes panics
 
-        let mut app = test::init_service(App::new().data(db).service(browse)).await;
-        let mut resp = test::call_service(&mut app, req).await;
+        let mut app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
+        let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
-        let body = resp.take_body();
-        let body = body.as_ref().unwrap();
-        assert_eq!(
-            &Body::from("poisoned lock: another task failed inside"),
-            body
-        );
+        let body = resp.into_body().try_into_bytes().unwrap();
+        assert_eq!("poisoned lock: another task failed inside", body);
     }
 
     // try to follow a shortened URL that doesn't exist
@@ -739,15 +747,14 @@ mod integration_tests {
 
         let db: Db = Db::new(Database::new(HashMap::new()));
 
-        let mut app = test::init_service(App::new().data(db).service(browse)).await;
-        let mut resp = test::call_service(&mut app, req).await;
+        let mut app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
+        let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-        let body = resp.take_body();
-        let body = body.as_ref().unwrap();
-        assert_eq!(&Body::from("not found"), body);
+        assert_eq!(resp.headers().get("Location"), None);
 
-        assert_eq!(resp.headers().get("Location"), None)
+        let body = resp.into_body().try_into_bytes().unwrap();
+        assert_eq!("not found", body);
     }
 
     // try to add a link for an already existing short-url
@@ -765,12 +772,12 @@ mod integration_tests {
         );
 
         let db: Db = Db::new(Database::new(db.into()));
-        let mut app = test::init_service(App::new().data(db).service(create_with_id)).await;
-        let mut resp = test::call_service(&mut app, req).await;
+        let mut app =
+            test::init_service(App::new().app_data(Data::new(db)).service(create_with_id)).await;
+        let resp = test::call_service(&mut app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-        let body = resp.take_body();
-        let body = body.as_ref().unwrap();
-        assert_eq!(&Body::from("already registered"), body);
+        let body = resp.into_body().try_into_bytes().unwrap();
+        assert_eq!("already registered", body);
     }
 }
