@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use home::home_dir;
+use hyper::{Body, Method, Request};
 use hyper::{Client as HyperClient, Uri};
 use serde::{Deserialize, Serialize};
+use std::convert::identity;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -16,6 +18,13 @@ struct Args {
     shorturl: String,
     #[structopt(help = "URL to shorten")]
     target: Option<String>,
+
+    #[structopt(
+        short = "f",
+        long = "force",
+        help = "Create the short URL, or if it already exists, update it instead"
+    )]
+    force_replace: bool,
 
     #[structopt(long = "api", help = "Base URL of the Goto API")]
     api_url: Option<String>,
@@ -56,12 +65,16 @@ struct CliOptions {
     shorturl: String,
     target: Option<String>,
 
+    always_replace: bool,
     verbose: bool,
     open_browser: bool,
 }
 
 impl CliOptions {
     fn new(args: &Args, config: &Config) -> CliOptions {
+        let always_replace = args.force_replace || config.force_replace.is_some_and(identity);
+
+        // TODO rewrite this
         let verbose = if !args.silent {
             if let Some(force_silent) = config.silent {
                 !force_silent
@@ -72,6 +85,7 @@ impl CliOptions {
             !args.silent
         };
 
+        // TODO rewrite this
         let open_browser = if !args.no_browser {
             if let Some(force_no_browser) = config.no_browser {
                 !force_no_browser
@@ -85,6 +99,7 @@ impl CliOptions {
         CliOptions {
             shorturl: args.shorturl.to_owned(),
             target: args.target.to_owned(),
+            always_replace,
             verbose,
             open_browser,
         }
@@ -101,12 +116,14 @@ mod test_cli_options {
             shorturl: String::new(),
             target: None,
             api_url: None,
+            force_replace: false,
             silent: false,
             no_browser: false,
         };
 
         let mut config = Config {
             api_url: None,
+            force_replace: None,
             silent: None,
             no_browser: None,
         };
@@ -153,12 +170,14 @@ mod test_cli_options {
             shorturl: String::new(),
             target: None,
             api_url: None,
+            force_replace: false,
             silent: false,
             no_browser: false,
         };
 
         let mut config = Config {
             api_url: None,
+            force_replace: None,
             silent: None,
             no_browser: None,
         };
@@ -198,6 +217,60 @@ mod test_cli_options {
         let got = CliOptions::new(&args, &config);
         assert!(!got.verbose);
     }
+
+    #[test]
+    fn test_force() {
+        let mut args = Args {
+            shorturl: String::new(),
+            target: None,
+            api_url: None,
+            force_replace: false,
+            silent: false,
+            no_browser: false,
+        };
+
+        let mut config = Config {
+            api_url: None,
+            force_replace: None,
+            silent: None,
+            no_browser: None,
+        };
+
+        // default
+        args.force_replace = false;
+        config.force_replace = None;
+        let got = CliOptions::new(&args, &config);
+        assert!(!got.always_replace);
+
+        // both args and config agree
+        args.force_replace = true;
+        config.force_replace = Some(true);
+        let got = CliOptions::new(&args, &config);
+        assert!(got.always_replace);
+
+        args.force_replace = false;
+        config.force_replace = Some(false);
+        let got = CliOptions::new(&args, &config);
+        assert!(!got.always_replace);
+
+        // args take precendence over config
+        args.force_replace = true;
+        config.force_replace = Some(false);
+        let got = CliOptions::new(&args, &config);
+        assert!(got.always_replace);
+
+        // only args
+        args.force_replace = true;
+        config.force_replace = None;
+        let got = CliOptions::new(&args, &config);
+        assert!(got.always_replace);
+
+        // only config
+        args.force_replace = false;
+        config.force_replace = Some(true);
+        let got = CliOptions::new(&args, &config);
+        assert!(got.always_replace);
+    }
 }
 
 struct Cli<C: Client> {
@@ -208,7 +281,13 @@ struct Cli<C: Client> {
 impl<C: Client> Cli<C> {
     async fn run(self) -> Result<(), GoToError> {
         match self.options.target {
-            Some(target) => self.client.create_new(self.options.shorturl, target).await,
+            Some(target) => {
+                if self.options.always_replace {
+                    self.client.update_url(self.options.shorturl, target).await
+                } else {
+                    self.client.create_new(self.options.shorturl, target).await
+                }
+            }
             None => {
                 let location = self.client.get_long_url(self.options.shorturl).await?;
 
@@ -253,6 +332,7 @@ fn open_location(loc: &str, browser: bool) {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct Config {
     api_url: Option<String>,
+    force_replace: Option<bool>,
     silent: Option<bool>,
     no_browser: Option<bool>,
 }
@@ -281,6 +361,7 @@ fn read_or_write_config(
             if len == 0 {
                 let default = Config {
                     silent: Some(false),
+                    force_replace: Some(false),
                     no_browser: Some(false),
                     api_url: Some(DEFAULT_API_URL.to_string()),
                 };
@@ -498,12 +579,14 @@ fn test_get_api_url() {
         shorturl: String::new(),
         target: None,
         api_url: None,
+        force_replace: false,
         silent: false,
         no_browser: false,
     };
 
     let mut config = Config {
         api_url: None,
+        force_replace: None,
         silent: None,
         no_browser: None,
     };
@@ -543,6 +626,8 @@ fn test_get_api_url() {
 trait Client {
     async fn create_new(self, shorturl: String, target: String) -> Result<(), GoToError>;
 
+    async fn update_url(self, shorturl: String, target: String) -> Result<(), GoToError>;
+
     async fn get_long_url(self, shorturl: String) -> Result<String, GoToError>;
 }
 
@@ -554,6 +639,9 @@ mod cli_test {
         create_new_called_with: Option<(String, String)>,
         want_create_new_called_with: Option<(String, String)>,
 
+        update_url_called_with: Option<(String, String)>,
+        want_update_url_called_with: Option<(String, String)>,
+
         get_long_url_called_with: Option<String>,
         want_get_long_url_called_with: Option<String>,
     }
@@ -563,6 +651,9 @@ mod cli_test {
             MockClient {
                 create_new_called_with: None,
                 want_create_new_called_with: None,
+
+                update_url_called_with: None,
+                want_update_url_called_with: None,
 
                 get_long_url_called_with: None,
                 want_get_long_url_called_with: None,
@@ -577,6 +668,11 @@ mod cli_test {
             Ok(())
         }
 
+        async fn update_url(mut self, shorturl: String, target: String) -> Result<(), GoToError> {
+            self.update_url_called_with = Some((shorturl, target));
+            Ok(())
+        }
+
         async fn get_long_url(mut self, shorturl: String) -> Result<String, GoToError> {
             self.get_long_url_called_with = Some(shorturl);
             Ok(String::new())
@@ -587,6 +683,10 @@ mod cli_test {
         fn drop(&mut self) {
             let want = self.want_create_new_called_with.as_ref();
             let got = self.create_new_called_with.as_ref();
+            assert_eq!(want, got);
+
+            let want = self.want_update_url_called_with.as_ref();
+            let got = self.update_url_called_with.as_ref();
             assert_eq!(want, got);
 
             let want = self.want_get_long_url_called_with.as_ref();
@@ -605,6 +705,7 @@ mod cli_test {
             options: CliOptions {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
+                always_replace: false,
                 verbose: false,
                 open_browser: false,
             },
@@ -624,6 +725,7 @@ mod cli_test {
             options: CliOptions {
                 shorturl: "hi".to_string(),
                 target: None,
+                always_replace: false,
                 verbose: false,
                 open_browser: false,
             },
@@ -643,6 +745,9 @@ mod cli_errors_test {
         create_new_called_with: Option<(String, String)>,
         want_create_new_called_with: Option<(String, String)>,
 
+        update_url_called_with: Option<(String, String)>,
+        want_update_url_called_with: Option<(String, String)>,
+
         get_long_url_called_with: Option<String>,
         want_get_long_url_called_with: Option<String>,
     }
@@ -652,6 +757,9 @@ mod cli_errors_test {
             MockClient {
                 create_new_called_with: None,
                 want_create_new_called_with: None,
+
+                update_url_called_with: None,
+                want_update_url_called_with: None,
 
                 get_long_url_called_with: None,
                 want_get_long_url_called_with: None,
@@ -666,6 +774,11 @@ mod cli_errors_test {
             Ok(())
         }
 
+        async fn update_url(mut self, shorturl: String, target: String) -> Result<(), GoToError> {
+            self.update_url_called_with = Some((shorturl, target));
+            Ok(())
+        }
+
         async fn get_long_url(mut self, shorturl: String) -> Result<String, GoToError> {
             self.get_long_url_called_with = Some(shorturl);
             Ok(String::new())
@@ -676,6 +789,10 @@ mod cli_errors_test {
         fn drop(&mut self) {
             let want = self.want_create_new_called_with.as_ref();
             let got = self.create_new_called_with.as_ref();
+            assert_eq!(want, got);
+
+            let want = self.want_update_url_called_with.as_ref();
+            let got = self.update_url_called_with.as_ref();
             assert_eq!(want, got);
 
             let want = self.want_get_long_url_called_with.as_ref();
@@ -694,6 +811,26 @@ mod cli_errors_test {
             options: CliOptions {
                 shorturl: "hello".to_string(),
                 target: Some("http://world".to_string()),
+                always_replace: false,
+                verbose: false,
+                open_browser: false,
+            },
+            client,
+        };
+        cli.run().await.unwrap()
+    }
+
+    #[actix_rt::test]
+    async fn test_cli_update_existing() {
+        let mut client = MockClient::new();
+        client.want_update_url_called_with =
+            Some(("hello".to_string(), "http://world".to_string()));
+
+        let cli = Cli {
+            options: CliOptions {
+                shorturl: "hello".to_string(),
+                target: Some("http://world".to_string()),
+                always_replace: true,
                 verbose: false,
                 open_browser: false,
             },
@@ -711,6 +848,7 @@ mod cli_errors_test {
             options: CliOptions {
                 shorturl: "hi".to_string(),
                 target: None,
+                always_replace: false,
                 verbose: false,
                 open_browser: false,
             },
@@ -730,16 +868,18 @@ impl HttpClient {
     }
 }
 
-#[async_trait]
-impl Client for HttpClient {
-    async fn create_new(self, shorturl: String, target: String) -> Result<(), GoToError> {
+impl HttpClient {
+    async fn create_short_url(
+        self,
+        shorturl: String,
+        target: String,
+        method: Method,
+    ) -> Result<(), GoToError> {
         let client = HyperClient::new();
 
         let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
-
-        use hyper::{Body, Method, Request};
         let req = Request::builder()
-            .method(Method::POST)
+            .method(method)
             .uri(uri)
             .body(Body::from(target))
             .map_err(|err| GoToError::CliError(err.to_string()))?;
@@ -764,6 +904,17 @@ impl Client for HttpClient {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Client for HttpClient {
+    async fn create_new(self, shorturl: String, target: String) -> Result<(), GoToError> {
+        self.create_short_url(shorturl, target, Method::POST).await
+    }
+
+    async fn update_url(self, shorturl: String, target: String) -> Result<(), GoToError> {
+        self.create_short_url(shorturl, target, Method::PUT).await
     }
 
     async fn get_long_url(self, shorturl: String) -> Result<String, GoToError> {
