@@ -3,10 +3,15 @@ name = "goto"
 version = "2.0.0"
 edition = "2018"
 default-run = "goto-api"
+repository = "https://github.com/tsauvajon/goto"
+keywords = ["url-shortener"]
+categories = ["command-line-utilities"]
+license = "MIT"
+description = "URL shortener with an API, a CLI and a Frontend"
 
 [dependencies]
-actix-files = "0.5"
-actix-web = "3"
+actix-files = "0.6"
+actix-web = "4.11"
 async-trait = "0.1"
 blake3 = "0.3"
 futures = "0.3"
@@ -21,7 +26,7 @@ webbrowser = "0.5.5"
 
 [dev-dependencies]
 actix-rt = "2.2"
-httpmock = "0.5"
+httpmock = "0.7"
 
 [[bin]]
 name = "goto-api"
@@ -30,3 +35,6 @@ path = "src/main.rs"
 [[bin]]
 name = "goto"
 path = "src/cli/main.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }

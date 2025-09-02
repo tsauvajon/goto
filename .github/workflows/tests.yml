@@ -1,49 +1,82 @@
-on: [push]
+name: CI
 
-name: Test
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+# Cancel superseded runs on the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege: Codecov v4 needs contents:read; adjust if you add more steps later
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  Tarpaulin:
-    name: Test and export coverage
+  tarpaulin:
+    name: Test + Coverage (Tarpaulin)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          toolchain: stable
-          override: true
+          fetch-depth: 0  # helpful for coverage diffing
 
-      - name: Run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@v0.1
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo/target
+        uses: Swatinem/rust-cache@v2
+
+      # Fast, maintained installer for Rust dev tools
+      - name: Install cargo-tarpaulin
+        uses: taiki-e/install-action@cargo-tarpaulin
+
+      - name: Run Tarpaulin
+        run: |
+          # Produces cobertura.xml at repo root
+          cargo tarpaulin \
+            --ignore-tests \
+            --exclude-files 'front/*' \
+            --out Xml \
+            --output-dir . \
+            -- --test-threads 1
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
-          version: '0.20.0'
-          args: '--ignore-tests --exclude-files front/* -- --test-threads 1'
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: cobertura.xml
+          flags: rust
+          fail_ci_if_error: true
 
-      - name: Upload to codecov.io
-        uses: codecov/codecov-action@v2
-        with:
-          token: ${{secrets.CODECOV_TOKEN}}
-
-      - name: Archive code coverage results
-        uses: actions/upload-artifact@v1
+      - name: Archive cobertura.xml
+        uses: actions/upload-artifact@v4
         with:
           name: code-coverage-report
           path: cobertura.xml
+          if-no-files-found: error
 
-  End2End:
-    name: End to end test
+  e2e:
+    name: End-to-End tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
 
-      - run: ./e2e.sh
+      - name: Cache cargo/target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run E2E script
+        run: |
+          chmod +x ./e2e.sh
+          ./e2e.sh
