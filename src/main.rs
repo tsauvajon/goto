@@ -57,6 +57,12 @@ struct Database {
     persistence: Option<File>,
 }
 
+impl Default for Database {
+    fn default() -> Self {
+        Self::new(HashMap::new())
+    }
+}
+
 impl Database {
     fn get(&self, key: &str) -> Option<&String> {
         self.data.get(key)
@@ -115,6 +121,12 @@ fn test_insert_data() {
 #[derive(Clone)]
 struct Db {
     data: web::Data<RwLock<Database>>,
+}
+
+impl Default for Db {
+    fn default() -> Self {
+        Self::new(Database::default())
+    }
 }
 
 impl Db {
@@ -306,37 +318,35 @@ impl Cli {
     }
 
     fn open_db(&self) -> Result<Db, String> {
-        let data = match &self.database {
-            None => Database::new(HashMap::new()),
-            Some(path) => {
-                let path = std::path::Path::new(&path);
-
-                let mut file = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .read(true)
-                    .truncate(false)
-                    .open(path)
-                    .map_err(|err| err.to_string())?;
-
-                let mut buf = String::new();
-                match file.read_to_string(&mut buf) {
-                    Err(_) => Database::new(HashMap::new()),
-                    Ok(len) => {
-                        if len == 0 {
-                            Database::new(HashMap::new()).with_persistence(file)
-                        } else {
-                            let yaml_contents: HashMap<String, String> = serde_yaml::from_str(&buf)
-                                .map_err(|err| format!("parse data: {err}"))?;
-
-                            Database::new(yaml_contents).with_persistence(file)
-                        }
-                    }
-                }
-            }
+        let Some(path) = &self.database else {
+            return Ok(Db::default());
         };
 
-        Ok(Db::new(data))
+        let path = std::path::Path::new(&path);
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .read(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|err| err.to_string())?;
+
+        let mut buf = String::new();
+        let Ok(len) = file.read_to_string(&mut buf) else {
+            return Ok(Db::default());
+        };
+
+        let database = if len == 0 {
+            Database::new(HashMap::new())
+        } else {
+            let yaml_contents: HashMap<String, String> =
+                serde_yaml::from_str(&buf).map_err(|err| format!("parse data: {err}"))?;
+
+            Database::new(yaml_contents)
+        };
+
+        Ok(Db::new(database.with_persistence(file)))
     }
 }
 
