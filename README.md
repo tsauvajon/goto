@@ -62,6 +62,9 @@ goto hello
 
 # display the URL but don't browse it
 goto hello --no-open-browser
+
+# replace an existing URL
+goto hello http://planet --force
 ```
 
 #### Clean-up
