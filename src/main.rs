@@ -125,7 +125,7 @@ fn test_insert_persists_updates() {
     let mut got = String::new();
     file.read_to_string(&mut got).unwrap();
 
-    assert_eq!("---\nfoo: baz\n".to_string(), got,);
+    assert_eq!("foo: baz\n".to_string(), got,);
 }
 
 #[derive(Clone)]

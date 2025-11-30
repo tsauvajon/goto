@@ -394,7 +394,7 @@ mod config_tests {
         let got = String::from_utf8(data).unwrap();
         assert!(got.contains("silent: false"), "{}", got);
         assert!(got.contains("no_browser: false"), "{}", got);
-        assert!(got.contains("api_url: \"http://"), "{}", got);
+        assert!(got.contains("api_url: http://"), "{}", got);
     }
 
     #[test]

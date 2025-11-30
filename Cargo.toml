@@ -1,6 +1,6 @@
 [package]
 name = "goto"
-version = "2.0.1"
+version = "2.0.2"
 edition = "2018"
 default-run = "goto-api"
 repository = "https://github.com/tsauvajon/goto"
@@ -13,20 +13,20 @@ description = "URL shortener with an API, a CLI and a Frontend"
 actix-files = "0.6"
 actix-web = "4.11"
 async-trait = "0.1"
-blake3 = "0.3"
+blake3 = "1.8"
 futures = "0.3"
 home = "0.5"
 hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 structopt = "0.3"
 serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.8"
+serde_yaml = "0.9.34-deprecated"
 url = "2.2"
-webbrowser = "0.8.3"
+webbrowser = "1.0"
 
 [dev-dependencies]
 actix-rt = "2.2"
-httpmock = "0.7"
+httpmock = "0.8"
 
 [[bin]]
 name = "goto-api"
