@@ -1,53 +1,74 @@
-build: # RPi Zero 2W (DietPi)
-	cargo build --release --target aarch64-unknown-linux-gnu
-	$(MAKE) deploy
+DIETPI_HOST ?= dietpi.local
+DIETPI_TARGET ?= aarch64-unknown-linux-gnu
 
-build-zerow: # RPi Zero W
-	cargo build --release --target arm-unknown-linux-musleabi
-	$(MAKE) deploy-zerow
+PIZEROW_HOST ?= pizero.local
+ZEROW_TARGET ?= arm-unknown-linux-musleabi
 
-build-cli:
+HOST ?= $(DIETPI_HOST)
+TARGET ?= $(DIETPI_TARGET)
+TMP_FOLDER ?= /tmp/goto
+DEPLOY_ARCHIVE ?= target/goto-deploy.tar.gz
+DEPLOY_ARCHIVE_NAME := $(notdir $(DEPLOY_ARCHIVE)) # strips the folder, keeps the filename
+
+# Build and run on my RPi Zero 2W (DietPi)
+replace: HOST := $(DIETPI_HOST)
+replace: TARGET := $(DIETPI_TARGET)
+replace: build deploy
+
+# Build and run on my RPi Zero W (Rasbperry Pi OS Lite)
+replace-zerow: HOST := $(PIZEROW_HOST)
+replace-zerow: TARGET := $(ZEROW_TARGET)
+replace-zerow: build-zerow deploy
+
+install: # Install the CLI locally
 	cargo build --release --bin goto
-	mv target/release/goto /usr/local/bin/
+	@dest="$$(command -v goto 2>/dev/null || echo $$HOME/.local/bin/goto)"; \
+	echo "Installing to $$dest"; \
+	mkdir -p "$$(dirname "$$dest")"; \
+	cp target/release/goto "$$dest"
 	goto --version
 
-build-cross: # todo: compress before sending
-	cross build --release --target arm-unknown-linux-musleabi
-	$(MAKE) deploy
+build:
+	cargo build --release --target $(DIETPI_TARGET)
 
-deploy-zerow:
-	# No scp root access, so we first get our files in our user's home, then move them with sudo
-	scp target/aarch64-unknown-linux-gnu/release/goto-api dietpi.local:/home/dietpi/goto-api
-	scp -r front/dist dietpi.local:/home/dietpi/goto-dist
-	scp goto.service dietpi.local:/home/dietpi/goto.service
+build-zerow:
+	cargo build --release --target $(ZEROW_TARGET)
 
-	ssh dietpi.local -- sudo mv /home/dietpi/goto-api /usr/local/bin/goto-api
-	ssh dietpi.local -- sudo mkdir -p /etc/goto/dist
-	ssh dietpi.local -- sudo rm -rf /etc/goto/dist/*
-	ssh dietpi.local -- sudo mv /home/dietpi/goto-dist/* /etc/goto/dist/
-	ssh dietpi.local -- sudo rm -r /home/dietpi/goto-dist
-	ssh dietpi.local -- sudo chown root:root /usr/local/bin/goto-api
-	ssh dietpi.local -- sudo chmod 755 /usr/local/bin/goto-api
-	ssh dietpi.local -- sudo mv /home/dietpi/goto.service /etc/systemd/system/goto.service
-	ssh dietpi.local -- sudo systemctl restart goto.service
-	ssh dietpi.local -- sudo journalctl -u goto.service
+build-zerow-cross: # Easier to setup but slower than direct compilation
+	cross build --release --target $(ZEROW_TARGET)
 
+# Package everything into a single archive, copy it over, then unpack/move remotely.
+# Deploying is particularly slow otherwise - also we can't directly scp the binary to
+# its final destination.
 deploy:
+	@mkdir -p $(dir $(DEPLOY_ARCHIVE))
+	rm -f $(DEPLOY_ARCHIVE)
+	tar -czf $(DEPLOY_ARCHIVE) \
+		-C target/$(TARGET)/release goto-api \
+		-C $(CURDIR)/front dist \
+		-C $(CURDIR) goto.service
+
+	ssh $(HOST) -- mkdir -p $(TMP_FOLDER)
+	scp $(DEPLOY_ARCHIVE) $(HOST):$(TMP_FOLDER)/$(DEPLOY_ARCHIVE_NAME)
+	ssh $(HOST) -- tar -xzf $(TMP_FOLDER)/$(DEPLOY_ARCHIVE_NAME) -C $(TMP_FOLDER)
+
 	# Binary
-	scp target/aarch64-unknown-linux-gnu/release/goto-api dietpi.local:/usr/local/bin/goto-api
-	ssh dietpi.local -- chown root:root /usr/local/bin/goto-api
-	ssh dietpi.local -- chmod 755 /usr/local/bin/goto-api
+	ssh $(HOST) -- mv $(TMP_FOLDER)/goto-api /usr/local/bin/goto-api
+	ssh $(HOST) -- chown root:root /usr/local/bin/goto-api
+	ssh $(HOST) -- chmod 755 /usr/local/bin/goto-api
 
 	# Frontend
-	ssh dietpi.local -- mkdir -p /etc/goto/dist
-	ssh dietpi.local -- rm -rf /etc/goto/dist/*
-	scp -r front/dist dietpi.local:/etc/goto/dist/
-	
-	# Service
-	scp goto.service dietpi.local:/etc/systemd/system/
-	ssh dietpi.local -- systemctl daemon-reload
-	ssh dietpi.local -- systemctl restart goto.service
-	ssh dietpi.local -- journalctl -u goto.service
+	ssh $(HOST) -- mkdir -p /etc/goto
+	ssh $(HOST) -- rm -rf /etc/goto/dist
+	ssh $(HOST) -- mv $(TMP_FOLDER)/dist /etc/goto/dist
+
+	# Systemd Service
+	ssh $(HOST) -- mv $(TMP_FOLDER)/goto.service /etc/systemd/system/goto.service
+	ssh $(HOST) -- systemctl daemon-reload
+	ssh $(HOST) -- systemctl restart goto.service
+	ssh $(HOST) -- journalctl -u goto.service
+
+	ssh $(HOST) -- rm -rf $(TMP_FOLDER)
 
 tarpaulin:
 	docker run \
