@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
-# make replace
-# make install
+make replace
+make install
 
 GREEN='\033[32m'
 RED='\033[31m'
 RESET='\033[0m'
 
-if goto hello http://world; then
+if goto hello http://world --force; then
     printf "create or replace ... ${GREEN}ok${RESET}\n"
 else
     printf "could not create or replace URL ... ${RED}FAILED${RESET}\n"
