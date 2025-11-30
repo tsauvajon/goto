@@ -4,7 +4,7 @@ build: # RPi Zero 2W (DietPi)
 
 build-zerow: # RPi Zero W
 	cargo build --release --target arm-unknown-linux-musleabi
-	$(MAKE) deploy
+	$(MAKE) deploy-zerow
 
 build-cli:
 	cargo build --release --bin goto
@@ -15,21 +15,39 @@ build-cross: # todo: compress before sending
 	cross build --release --target arm-unknown-linux-musleabi
 	$(MAKE) deploy
 
-deploy:
-	scp target/aarch64-unknown-linux-gnu/release/goto-api pi:/home/pi/goto-api
-	scp -r front/dist pi:/home/pi/goto-dist
-	scp goto.service pi:/home/pi/goto.service
+deploy-zerow:
+	# No scp root access, so we first get our files in our user's home, then move them with sudo
+	scp target/aarch64-unknown-linux-gnu/release/goto-api dietpi.local:/home/dietpi/goto-api
+	scp -r front/dist dietpi.local:/home/dietpi/goto-dist
+	scp goto.service dietpi.local:/home/dietpi/goto.service
 
-	ssh pi -- sudo mv /home/pi/goto-api /usr/local/bin/goto-api
-	ssh pi -- sudo mkdir -p /etc/goto/dist
-	ssh pi -- sudo rm -rf /etc/goto/dist/*
-	ssh pi -- sudo mv /home/pi/goto-dist/* /etc/goto/dist/
-	ssh pi -- sudo rm -r /home/pi/goto-dist
-	ssh pi -- sudo chown root:root /usr/local/bin/goto-api
-	ssh pi -- sudo chmod 755 /usr/local/bin/goto-api
-	ssh pi -- sudo mv /home/pi/goto.service /etc/systemd/system/goto.service
-	ssh pi -- sudo systemctl restart goto.service
-	ssh pi -- sudo journalctl -u goto.service
+	ssh dietpi.local -- sudo mv /home/dietpi/goto-api /usr/local/bin/goto-api
+	ssh dietpi.local -- sudo mkdir -p /etc/goto/dist
+	ssh dietpi.local -- sudo rm -rf /etc/goto/dist/*
+	ssh dietpi.local -- sudo mv /home/dietpi/goto-dist/* /etc/goto/dist/
+	ssh dietpi.local -- sudo rm -r /home/dietpi/goto-dist
+	ssh dietpi.local -- sudo chown root:root /usr/local/bin/goto-api
+	ssh dietpi.local -- sudo chmod 755 /usr/local/bin/goto-api
+	ssh dietpi.local -- sudo mv /home/dietpi/goto.service /etc/systemd/system/goto.service
+	ssh dietpi.local -- sudo systemctl restart goto.service
+	ssh dietpi.local -- sudo journalctl -u goto.service
+
+deploy:
+	# Binary
+	scp target/aarch64-unknown-linux-gnu/release/goto-api dietpi.local:/usr/local/bin/goto-api
+	ssh dietpi.local -- chown root:root /usr/local/bin/goto-api
+	ssh dietpi.local -- chmod 755 /usr/local/bin/goto-api
+
+	# Frontend
+	ssh dietpi.local -- mkdir -p /etc/goto/dist
+	ssh dietpi.local -- rm -rf /etc/goto/dist/*
+	scp -r front/dist dietpi.local:/etc/goto/dist/
+	
+	# Service
+	scp goto.service dietpi.local:/etc/systemd/system/
+	ssh dietpi.local -- systemctl daemon-reload
+	ssh dietpi.local -- systemctl restart goto.service
+	ssh dietpi.local -- journalctl -u goto.service
 
 tarpaulin:
 	docker run \
