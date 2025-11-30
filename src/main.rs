@@ -444,6 +444,30 @@ mod cli_tests {
     }
 
     #[test]
+    fn test_open_db_existing_file_invalid_utf8() {
+        use std::env::temp_dir;
+        use std::fs::File;
+        use std::io::Write;
+
+        let dir = temp_dir();
+        let tmpfile_path = format!("{}/tmpfile-invalid-utf8.txt", dir.to_str().unwrap());
+
+        let mut file = File::create(&tmpfile_path).unwrap();
+        file.write_all(&[0xff, 0xfe, 0xfd]).unwrap();
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(tmpfile_path),
+        };
+        let db = cli.open_db().unwrap();
+        let data = db.read().unwrap();
+
+        assert!(data.persistence.is_none());
+        assert!(data.data.is_empty());
+    }
+
+    #[test]
     fn test_open_db_existing_file_with_data() {
         use std::env::temp_dir;
         use std::fs::File;
