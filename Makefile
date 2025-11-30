@@ -1,4 +1,8 @@
-build:
+build: # RPi Zero 2W (DietPi)
+	cargo build --release --target aarch64-unknown-linux-gnu
+	$(MAKE) deploy
+
+build-zerow: # RPi Zero W
 	cargo build --release --target arm-unknown-linux-musleabi
 	$(MAKE) deploy
 
@@ -12,7 +16,7 @@ build-cross: # todo: compress before sending
 	$(MAKE) deploy
 
 deploy:
-	scp target/arm-unknown-linux-musleabi/release/goto-api pi:/home/pi/goto-api
+	scp target/aarch64-unknown-linux-gnu/release/goto-api pi:/home/pi/goto-api
 	scp -r front/dist pi:/home/pi/goto-dist
 	scp goto.service pi:/home/pi/goto.service
 
