@@ -260,22 +260,19 @@ struct Cli<C: Client> {
 
 impl<C: Client> Cli<C> {
     async fn run(self) -> Result<(), GoToError> {
-        match self.options.target {
-            Some(target) => {
-                if self.options.always_replace {
-                    self.client.update_url(self.options.shorturl, target).await
-                } else {
-                    self.client.create_new(self.options.shorturl, target).await
-                }
-            }
-            None => {
-                let location = self.client.get_long_url(self.options.shorturl).await?;
+        let Some(target) = self.options.target else {
+            let location = self.client.get_long_url(self.options.shorturl).await?;
 
-                display_location(&location, self.options.verbose, &mut std::io::stdout());
-                open_location(&location, self.options.open_browser);
+            display_location(&location, self.options.verbose, &mut std::io::stdout());
+            open_location(&location, self.options.open_browser);
 
-                Ok(())
-            }
+            return Ok(());
+        };
+
+        if self.options.always_replace {
+            self.client.update_url(self.options.shorturl, target).await
+        } else {
+            self.client.create_new(self.options.shorturl, target).await
         }
     }
 }
@@ -317,6 +314,17 @@ struct Config {
     no_browser: Option<bool>,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            silent: Some(false),
+            force_replace: Some(false),
+            no_browser: Some(false),
+            api_url: Some(DEFAULT_API_URL.to_string()),
+        }
+    }
+}
+
 fn open_or_create_config(filepath: &PathBuf) -> Result<Config, GoToError> {
     let _ = std::fs::create_dir_all(filepath.parent().unwrap());
 
@@ -339,17 +347,11 @@ fn read_or_write_config(
         Err(err) => Err(GoToError::CliError(format!("read config file: {err}"))),
         Ok(len) => {
             if len == 0 {
-                let default = Config {
-                    silent: Some(false),
-                    force_replace: Some(false),
-                    no_browser: Some(false),
-                    api_url: Some(DEFAULT_API_URL.to_string()),
-                };
-
-                file.write_all(serde_yaml::to_string(&default).unwrap().as_bytes())
+                let default_config = Config::default();
+                file.write_all(serde_yaml::to_string(&default_config).unwrap().as_bytes())
                     .map_err(|err| GoToError::CliError(format!("write default config: {err}",)))?;
 
-                Ok(default)
+                Ok(default_config)
             } else {
                 let yaml_contents = serde_yaml::from_str(&buf)
                     .map_err(|err| GoToError::CliError(format!("parse config data: {err}")))?;
@@ -367,6 +369,20 @@ mod config_tests {
     use std::io::{Cursor, Error, Read, Result, Write};
 
     use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let default = Config::default();
+
+        assert_eq!(Some(false), default.silent);
+        assert_eq!(Some(false), default.force_replace);
+        assert_eq!(Some(false), default.no_browser);
+        assert_eq!(
+            Some(DEFAULT_API_URL.to_string()),
+            default.api_url,
+            "default api url should be localhost"
+        );
+    }
 
     #[test]
     fn test_create_config_when_missing() {
