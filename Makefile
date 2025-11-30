@@ -22,7 +22,10 @@ replace-zerow: build-zerow deploy
 
 install: # Install the CLI locally
 	cargo build --release --bin goto
-	mv target/release/goto /usr/local/bin/
+	@dest="$$(command -v goto 2>/dev/null || echo $$HOME/.local/bin/goto)"; \
+	echo "Installing to $$dest"; \
+	mkdir -p "$$(dirname "$$dest")"; \
+	cp target/release/goto "$$dest"
 	goto --version
 
 build:
