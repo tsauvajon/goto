@@ -44,7 +44,7 @@ use actix_web::{error, get, post, put, web, App, HttpResponse, HttpServer, Respo
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::sync::RwLock;
 use structopt::StructOpt;
 use url::Url;
@@ -69,16 +69,13 @@ impl Database {
     }
 
     fn insert(&mut self, key: &str, value: &str) -> Option<String> {
-        match self.data.insert(key.to_string(), value.to_string()) {
-            Some(existing_value) => Some(existing_value),
-            None => {
-                if let Some(file) = &mut self.persistence {
-                    file.write_all(serialise_entry(key.to_string(), value.to_string()).as_bytes())
-                        .expect("persist new entry");
-                }
-                None
-            }
+        let previous_value = self.data.insert(key.to_string(), value.to_string());
+
+        if let Some(file) = &mut self.persistence {
+            persist_database(file, &self.data);
         }
+
+        previous_value
     }
 
     fn new(data: HashMap<String, String>) -> Self {
@@ -95,27 +92,40 @@ impl Database {
 }
 
 #[test]
-fn test_insert_data() {
+fn test_insert_data_returns_previous() {
     use std::env::temp_dir;
 
     let dir = temp_dir();
     let tmpfile_path = format!("{}/tmpfile2.txt", dir.to_str().unwrap());
     let file = File::create(&tmpfile_path).unwrap();
 
+    let mut data = Database::new(HashMap::new()).with_persistence(file);
+    let outcome = data.insert("hi", "qwerty");
+    assert_eq!(None, outcome);
+
+    let outcome = data.insert("hi", "zxcvbnm");
+    assert_eq!(Some("qwerty".to_string()), outcome);
+}
+
+#[test]
+fn test_insert_persists_updates() {
+    use std::env::temp_dir;
+
+    let tmp_dir = temp_dir();
+    let tmpfile_path = format!("{}/tmpfile-insert-update.txt", tmp_dir.to_str().unwrap());
+    let file = File::create(&tmpfile_path).unwrap();
+
     {
         let mut data = Database::new(HashMap::new()).with_persistence(file);
-        let outcome = data.insert("hi", "qwerty");
-        assert_eq!(None, outcome);
-
-        let outcome = data.insert("hi", "zxcvbnm");
-        assert_eq!(Some("qwerty".to_string()), outcome);
+        data.insert("foo", "bar");
+        data.insert("foo", "baz");
     }
 
     let mut file = File::open(tmpfile_path).unwrap();
     let mut got = String::new();
     file.read_to_string(&mut got).unwrap();
 
-    assert_eq!("hi: \"qwerty\"\n".to_string(), got);
+    assert_eq!("---\nfoo: baz\n".to_string(), got,);
 }
 
 #[derive(Clone)]
@@ -155,11 +165,16 @@ impl Db {
     }
 }
 
-/// serialise_entry serialises a new database entry into
-/// a new YAML line, that can be added to an existing
-/// database.
-fn serialise_entry(key: String, value: String) -> String {
-    format!("{key}: \"{value}\"\n")
+/// Persist the entire in-memory database to disk as YAML.
+///
+/// The file is truncated and re-written so each short URL appears only once.
+fn persist_database(file: &mut File, data: &HashMap<String, String>) {
+    file.set_len(0).expect("truncate database file");
+    file.rewind().expect("rewind database file");
+
+    let payload = serde_yaml::to_string(data).expect("serialise database");
+    file.write_all(payload.as_bytes())
+        .expect("write database file");
 }
 
 /// browse redirects to the long URL hidden behind a short URL, or returns a
@@ -206,7 +221,7 @@ enum UpsertShortUrlCommand {
     UpdateShortUrl { id: String },
 }
 
-/// Create an short URL redirecting to a long URL.
+/// Create a short URL redirecting to a long URL.
 ///
 /// If you pass an `id` a parameter, your short URL will be` /{id}`.
 ///
@@ -654,28 +669,29 @@ mod tests {
     }
 
     #[test]
-    // We write new database (= file) lines one at a time, and serde_yaml
-    // to_string method doesn't help for two reasons:
-    //   - we don't need the error handling
-    //   - we don't want the `---\n` prefix
-    //
-    // On the other hand, if we wanted to write the entire database every
-    // time, it would work well.
     fn test_write_database() {
+        use std::env::temp_dir;
+        use std::fs::File;
+        use std::io::Read;
+
         let mut database: HashMap<String, String> = HashMap::new();
         database.insert(
             "tsauvajon".to_string(),
             "https://linkedin.com/in/tsauvajon".to_string(),
         );
         let want = serde_yaml::to_string(&database).unwrap();
-        let want = want.trim_start_matches("---\n").to_string();
 
-        let got = serialise_entry(
-            "tsauvajon".to_string(),
-            "https://linkedin.com/in/tsauvajon".to_string(),
-        );
+        let tmp_dir = temp_dir();
+        let tmpfile_path = format!("{}/persist_database.yml", tmp_dir.to_str().unwrap());
+        let mut file = File::create(&tmpfile_path).unwrap();
 
-        assert_eq!(want, got)
+        persist_database(&mut file, &database);
+
+        let mut file = File::open(&tmpfile_path).unwrap();
+        let mut got = String::new();
+        file.read_to_string(&mut got).unwrap();
+
+        assert_eq!(want, got);
     }
 }
 
