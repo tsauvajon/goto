@@ -7,11 +7,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/goto-api</string>
+        <string>/Users/thomas/.local/bin/goto-api</string>
         <string>--addr</string>
         <string>127.0.0.1:50002</string>
         <string>--database</string>
-        <string>/etc/goto/database.yml</string>
+        <string>/Users/thomas/.config/goto/database.yml</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -20,10 +20,13 @@
     <key>KeepAlive</key>
     <true/>
 
+    <key>WorkingDirectory</key>
+    <string>/Users/thomas/.local/bin</string>
+
     <key>StandardOutPath</key>
-    <string>/var/log/goto-api.log</string>
+    <string>/Users/thomas/Library/Logs/goto.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/var/log/goto-api.err</string>
+    <string>/Users/thomas/Library/Logs/goto-error.log</string>
 </dict>
 </plist>

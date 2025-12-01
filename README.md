@@ -19,7 +19,7 @@ goto-api --version
 ### Server: Launchd service (MacOS)
 ```sh
 make install-macos
-echo "api_url: http://127.0.0.1:5002" > $HOME/.config/goto/config.yml
+echo "api_url: http://127.0.0.1:50002" > $HOME/.config/goto/config.yml
 goto-api --version
 ```
 
@@ -35,6 +35,8 @@ goto hello # Should open http://world.com in the browser
 Check `Makefile` for all possibilities.
 
 ## Running without installation
+
+If you'd rather not install the binaries, you can run them directly via Cargo:
 
 ## Server
 
@@ -63,11 +65,6 @@ Use `cargo run -- --help` for available options and their description.
 
 #### Build it yourself
 ```sh
-make build-cli # build for release and move to /usr/local/bin/goto
-goto --version
-
-# OR
-
 cargo build --bin goto
 target/debug/goto --version
 ```

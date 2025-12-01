@@ -15,7 +15,7 @@ replace: HOST := $(DIETPI_HOST)
 replace: TARGET := $(DIETPI_TARGET)
 replace: build deploy
 
-# Build and run on my RPi Zero W (Rasbperry Pi OS Lite)
+# Build and run on my RPi Zero W (Raspberry Pi OS Lite)
 replace-zerow: HOST := $(PIZEROW_HOST)
 replace-zerow: TARGET := $(ZEROW_TARGET)
 replace-zerow: build-zerow deploy
@@ -39,10 +39,8 @@ install-api: # Install the API binary locally
 install-macos: install-api # Install the API as a launchd service (as the logged in user, not system, port 50002)
 	mkdir -p ~/Library/LaunchAgents
 	@dest="$$(command -v goto-api 2>/dev/null || echo $$HOME/.local/bin/goto-api)"; \
-	db="$$HOME/.config/goto/database.yml"; \
-	mkdir -p "$$(dirname "$$db")"; \
-	sed -e "s#/usr/local/bin/goto-api#$$dest#g" \
-		-e "s#/etc/goto/database.yml#$$db#g" \
+	sed -e "s#/Users/thomas/.local/bin/goto-api#$$dest#g" \
+		-e "s#/Users/thomas#$$HOME#g" \
 		goto.plist > ~/Library/LaunchAgents/dev.goto.api.plist
 	launchctl load ~/Library/LaunchAgents/dev.goto.api.plist
 	launchctl start dev.goto.api
