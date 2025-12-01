@@ -8,7 +8,35 @@ it to disk.
 
 2 clients are available for it, a front-end web interface and a CLI tool.
 
-## Example usage
+## Installation
+
+### Server
+```sh
+make install-api # -> install binary at $HOME/.local/bin/goto-api
+goto-api --version
+```
+
+### Server: Launchd service (MacOS)
+```sh
+make install-macos
+echo "api_url: http://127.0.0.1:50002" > $HOME/.config/goto/config.yml
+goto-api --version
+```
+
+### Client: CLI tool
+```sh
+make install # -> install at $HOME/.local/bin/goto
+goto --version
+
+goto hello http://world.com
+goto hello # Should open http://world.com in the browser
+```
+
+Check `Makefile` for all possibilities.
+
+## Running without installation
+
+If you'd rather not install the binaries, you can run them directly via Cargo:
 
 ## Server
 
@@ -21,9 +49,9 @@ cargo build --release
 target/release/goto-api
 ```
 
-Same thing, but with some options:
+With options:
 ```sh
-cargo run -- --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/dist/
+target/release/goto-api --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/dist/
 ```
 
 Use `cargo run -- --help` for available options and their description.
@@ -36,17 +64,12 @@ Use `cargo run -- --help` for available options and their description.
 
 #### Build it yourself
 ```sh
-make build-cli # build for release and move to /usr/local/bin/goto
-goto --version
-
-# OR
-
 cargo build --bin goto
 target/debug/goto --version
 ```
 
 The first time you run the CLI, it will create its configuration at
-`$HOME/.goto/config.yml`. Feel free to edit it to change the defaults!
+`$HOME/.config/goto/config.yml`. Feel free to edit it to change the defaults!
 
 #### Use it
 
@@ -70,8 +93,9 @@ goto hello http://planet --force
 #### Clean-up
 
 ```sh
-rm /usr/local/bin/goto
-rm -rf $HOME/.goto
+rm $HOME/.local/bin/goto
+rm $HOME/.local/bin/goto-api
+rm -rf $HOME/.config/goto
 ```
 
 ### Web Front-End

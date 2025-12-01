@@ -543,7 +543,8 @@ async fn main() -> Result<(), GoToError> {
     let args = Args::from_args();
 
     let mut filepath = home_dir().unwrap();
-    filepath.push(".goto");
+    filepath.push(".config");
+    filepath.push("goto");
     filepath.push("config.yml");
 
     let config = open_or_create_config(&filepath).unwrap();

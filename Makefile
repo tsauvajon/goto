@@ -15,7 +15,7 @@ replace: HOST := $(DIETPI_HOST)
 replace: TARGET := $(DIETPI_TARGET)
 replace: build deploy
 
-# Build and run on my RPi Zero W (Rasbperry Pi OS Lite)
+# Build and run on my RPi Zero W (Raspberry Pi OS Lite)
 replace-zerow: HOST := $(PIZEROW_HOST)
 replace-zerow: TARGET := $(ZEROW_TARGET)
 replace-zerow: build-zerow deploy
@@ -27,6 +27,23 @@ install: # Install the CLI locally
 	mkdir -p "$$(dirname "$$dest")"; \
 	cp target/release/goto "$$dest"
 	goto --version
+
+install-api: # Install the API binary locally
+	cargo build --release --bin goto-api
+	@dest="$$(command -v goto-api 2>/dev/null || echo $$HOME/.local/bin/goto-api)"; \
+	echo "Installing to $$dest"; \
+	mkdir -p "$$(dirname "$$dest")"; \
+	cp target/release/goto-api "$$dest"
+	goto-api --version
+
+install-macos: install-api # Install the API as a launchd service (as the logged in user, not system, port 50002)
+	mkdir -p ~/Library/LaunchAgents
+	@dest="$$(command -v goto-api 2>/dev/null || echo $$HOME/.local/bin/goto-api)"; \
+	sed -e "s#/Users/thomas/.local/bin/goto-api#$$dest#g" \
+		-e "s#/Users/thomas#$$HOME#g" \
+		goto.plist > ~/Library/LaunchAgents/dev.goto.api.plist
+	launchctl load ~/Library/LaunchAgents/dev.goto.api.plist
+	launchctl start dev.goto.api
 
 build:
 	cargo build --release --target $(DIETPI_TARGET)
@@ -40,6 +57,7 @@ build-zerow-cross: # Easier to setup but slower than direct compilation
 # Package everything into a single archive, copy it over, then unpack/move remotely.
 # Deploying is particularly slow otherwise - also we can't directly scp the binary to
 # its final destination.
+# Port 50002
 deploy:
 	@mkdir -p $(dir $(DEPLOY_ARCHIVE))
 	rm -f $(DEPLOY_ARCHIVE)
