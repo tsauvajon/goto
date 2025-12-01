@@ -46,13 +46,12 @@ cargo run
 # or
 
 cargo build --release
-cd target/release
-goto-api
+target/release/goto-api
 ```
 
 With options:
 ```sh
-goto-api --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/dist/
+target/release/goto-api --addr 127.0.0.1:8080 --database ./database.yml --frontdir front/dist/
 ```
 
 Use `cargo run -- --help` for available options and their description.
