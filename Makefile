@@ -28,6 +28,25 @@ install: # Install the CLI locally
 	cp target/release/goto "$$dest"
 	goto --version
 
+install-api: # Install the API binary locally
+	cargo build --release --bin goto-api
+	@dest="$$(command -v goto-api 2>/dev/null || echo $$HOME/.local/bin/goto-api)"; \
+	echo "Installing to $$dest"; \
+	mkdir -p "$$(dirname "$$dest")"; \
+	cp target/release/goto-api "$$dest"
+	goto-api --version
+
+install-macos: install-api # Install the API as a launchd service (as the logged in user, not system, port 50002)
+	mkdir -p ~/Library/LaunchAgents
+	@dest="$$(command -v goto-api 2>/dev/null || echo $$HOME/.local/bin/goto-api)"; \
+	db="$$HOME/.config/goto/database.yml"; \
+	mkdir -p "$$(dirname "$$db")"; \
+	sed -e "s#/usr/local/bin/goto-api#$$dest#g" \
+		-e "s#/etc/goto/database.yml#$$db#g" \
+		goto.plist > ~/Library/LaunchAgents/dev.goto.api.plist
+	launchctl load ~/Library/LaunchAgents/dev.goto.api.plist
+	launchctl start dev.goto.api
+
 build:
 	cargo build --release --target $(DIETPI_TARGET)
 
@@ -40,6 +59,7 @@ build-zerow-cross: # Easier to setup but slower than direct compilation
 # Package everything into a single archive, copy it over, then unpack/move remotely.
 # Deploying is particularly slow otherwise - also we can't directly scp the binary to
 # its final destination.
+# Port 50002
 deploy:
 	@mkdir -p $(dir $(DEPLOY_ARCHIVE))
 	rm -f $(DEPLOY_ARCHIVE)

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.goto.api</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/goto-api</string>
+        <string>--addr</string>
+        <string>127.0.0.1:50002</string>
+        <string>--database</string>
+        <string>/etc/goto/database.yml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/goto-api.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/goto-api.err</string>
+</dict>
+</plist>
