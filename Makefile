@@ -83,6 +83,7 @@ deploy:
 	# Systemd Service
 	ssh $(HOST) -- mv $(TMP_FOLDER)/goto.service /etc/systemd/system/goto.service
 	ssh $(HOST) -- systemctl daemon-reload
+	ssh $(HOST) -- systemctl enable goto.service
 	ssh $(HOST) -- systemctl restart goto.service
 	ssh $(HOST) -- journalctl -u goto.service
 
