@@ -204,7 +204,12 @@ fn hash(input: &str) -> String {
 /// Read a string target from an actix_web Payload
 async fn read_target(mut payload: web::Payload) -> Result<String, String> {
     let mut body = web::BytesMut::new();
-    while let Some(chunk) = payload.next().await {
+    loop {
+        let next_chunk = payload.next().await;
+        let Some(chunk) = next_chunk else {
+            break;
+        };
+
         let chunk = chunk.map_err(|err| err.to_string())?;
         // limit max size of in-memory payload
         if (body.len() + chunk.len()) > MAX_SIZE {
