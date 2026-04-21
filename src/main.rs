@@ -38,13 +38,18 @@ redirecting to https://linkedin.com/in/tsauvajon ...* Closing connection 0
     clippy::cargo
 )]
 
+#[cfg(all(not(coverage), not(tarpaulin_include)))]
 use actix_files::Files;
 use actix_web::web::Data;
-use actix_web::{error, get, post, put, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{error, get, post, put, web, App, HttpResponse, Responder};
+#[cfg(all(not(coverage), not(tarpaulin_include)))]
+use actix_web::HttpServer;
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, Write};
+use std::ffi::{OsStr, OsString};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use structopt::StructOpt;
 use url::Url;
@@ -52,9 +57,43 @@ use url::Url;
 const MAX_SIZE: usize = 256; // max payload size is 256 Kb
 const RANDOM_URL_SIZE: usize = 5; // ramdomly generated URLs are 5 characters long
 
+/// Error propagated when an `insert` fails to persist to disk.
+///
+/// The in-memory state is rolled back before the error is returned, so a
+/// caller that surfaces this error can be sure the DB state on disk and
+/// in memory remain consistent.
+#[derive(Debug)]
+struct PersistError(String);
+
+impl std::fmt::Display for PersistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "persist: {}", self.0)
+    }
+}
+
 struct Database {
     data: HashMap<String, String>,
-    persistence: Option<File>,
+    persistence: Option<PathBuf>,
+}
+
+trait PersistWriter {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
+    fn flush(&mut self) -> io::Result<()>;
+    fn sync_all(&mut self) -> io::Result<()>;
+}
+
+impl PersistWriter for std::fs::File {
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        Write::write_all(self, buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Write::flush(self)
+    }
+
+    fn sync_all(&mut self) -> io::Result<()> {
+        std::fs::File::sync_all(self)
+    }
 }
 
 impl Default for Database {
@@ -68,14 +107,26 @@ impl Database {
         self.data.get(key)
     }
 
-    fn insert(&mut self, key: &str, value: &str) -> Option<String> {
+    fn insert(&mut self, key: &str, value: &str) -> Result<Option<String>, PersistError> {
         let previous_value = self.data.insert(key.to_string(), value.to_string());
 
-        if let Some(file) = &mut self.persistence {
-            persist_database(file, &self.data);
+        if let Some(path) = &self.persistence {
+            if let Err(err) = persist_database(path, &self.data) {
+                // Roll back the in-memory change so state stays consistent
+                // with what's on disk.
+                match &previous_value {
+                    Some(old) => {
+                        self.data.insert(key.to_string(), old.clone());
+                    }
+                    None => {
+                        self.data.remove(key);
+                    }
+                }
+                return Err(PersistError(err.to_string()));
+            }
         }
 
-        previous_value
+        Ok(previous_value)
     }
 
     fn new(data: HashMap<String, String>) -> Self {
@@ -85,7 +136,7 @@ impl Database {
         }
     }
 
-    fn with_persistence(mut self, persistence: File) -> Self {
+    fn with_persistence(mut self, persistence: PathBuf) -> Self {
         self.persistence = Some(persistence);
         self
     }
@@ -96,36 +147,100 @@ fn test_insert_data_returns_previous() {
     use std::env::temp_dir;
 
     let dir = temp_dir();
-    let tmpfile_path = format!("{}/tmpfile2.txt", dir.to_str().unwrap());
-    let file = File::create(&tmpfile_path).unwrap();
+    let tmpfile_path = PathBuf::from(format!("{}/tmpfile2.txt", dir.to_str().unwrap()));
 
-    let mut data = Database::new(HashMap::new()).with_persistence(file);
-    let outcome = data.insert("hi", "qwerty");
+    let mut data = Database::new(HashMap::new()).with_persistence(tmpfile_path);
+    let outcome = data.insert("hi", "qwerty").unwrap();
     assert_eq!(None, outcome);
 
-    let outcome = data.insert("hi", "zxcvbnm");
+    let outcome = data.insert("hi", "zxcvbnm").unwrap();
     assert_eq!(Some("qwerty".to_string()), outcome);
 }
 
 #[test]
 fn test_insert_persists_updates() {
     use std::env::temp_dir;
+    use std::fs;
 
     let tmp_dir = temp_dir();
-    let tmpfile_path = format!("{}/tmpfile-insert-update.txt", tmp_dir.to_str().unwrap());
-    let file = File::create(&tmpfile_path).unwrap();
+    let tmpfile_path = PathBuf::from(format!(
+        "{}/tmpfile-insert-update.txt",
+        tmp_dir.to_str().unwrap()
+    ));
 
     {
-        let mut data = Database::new(HashMap::new()).with_persistence(file);
-        data.insert("foo", "bar");
-        data.insert("foo", "baz");
+        let mut data = Database::new(HashMap::new()).with_persistence(tmpfile_path.clone());
+        data.insert("foo", "bar").unwrap();
+        data.insert("foo", "baz").unwrap();
     }
 
-    let mut file = File::open(tmpfile_path).unwrap();
-    let mut got = String::new();
-    file.read_to_string(&mut got).unwrap();
-
+    let got = fs::read_to_string(&tmpfile_path).unwrap();
     assert_eq!("foo: baz\n".to_string(), got,);
+}
+
+#[test]
+fn test_insert_atomic_no_tmp_left_after_success() {
+    use std::env::temp_dir;
+
+    let tmp_dir = temp_dir();
+    let db_path = PathBuf::from(format!(
+        "{}/atomic-no-tmp-left.yml",
+        tmp_dir.to_str().unwrap()
+    ));
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(tmp_path_for(&db_path));
+
+    let mut data = Database::new(HashMap::new()).with_persistence(db_path.clone());
+    data.insert("a", "http://example.com/a").unwrap();
+    data.insert("b", "http://example.com/b").unwrap();
+    data.insert("a", "http://example.com/a2").unwrap();
+
+    // The sibling temp file must not linger after a successful write.
+    assert!(
+        !tmp_path_for(&db_path).exists(),
+        "temp file should be removed by rename"
+    );
+
+    // Sanity check the final file is the latest state.
+    let got = std::fs::read_to_string(&db_path).unwrap();
+    assert!(got.contains("a: http://example.com/a2"));
+    assert!(got.contains("b: http://example.com/b"));
+}
+
+#[test]
+fn test_persist_database_survives_pre_rename_crash() {
+    use std::env::temp_dir;
+
+    // Simulate a crash where the temp file was written but the rename
+    // never happened: the original file must remain intact and parseable.
+    let tmp_dir = temp_dir();
+    let db_path = PathBuf::from(format!(
+        "{}/atomic-partial-write.yml",
+        tmp_dir.to_str().unwrap()
+    ));
+    let tmp_path = tmp_path_for(&db_path);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(&tmp_path);
+
+    // Seed the target file with a known-good state.
+    std::fs::write(&db_path, "good: http://good\n").unwrap();
+
+    // Simulate a partially-written temp file that was never renamed.
+    std::fs::write(&tmp_path, "truncated-garbage").unwrap();
+    assert!(tmp_path.exists());
+
+    // Re-open the DB and verify it parses only the final file.
+    let cli = Cli {
+        front_dist_directory: None,
+        addr: None,
+        database: Some(db_path.to_str().unwrap().to_string()),
+    };
+    let db = cli.open_db().unwrap();
+    let data = db.read().unwrap();
+    assert_eq!(data.get("good"), Some(&"http://good".to_string()));
+
+    // Cleanup so we don't leave state around for other tests.
+    let _ = std::fs::remove_file(&tmp_path);
 }
 
 #[derive(Clone)]
@@ -165,16 +280,54 @@ impl Db {
     }
 }
 
-/// Persist the entire in-memory database to disk as YAML.
-///
-/// The file is truncated and re-written so each short URL appears only once.
-fn persist_database(file: &mut File, data: &HashMap<String, String>) {
-    file.set_len(0).expect("truncate database file");
-    file.rewind().expect("rewind database file");
+/// Persist the entire in-memory database to disk as YAML, atomically.
+fn persist_database(path: &Path, data: &HashMap<String, String>) -> io::Result<()> {
+    let tmp = tmp_path_for(path);
+    let result = write_and_rename(&tmp, path, data);
+    if result.is_err() {
+        // Best-effort cleanup so we don't leave a stale temp file behind.
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
 
-    let payload = serde_yaml::to_string(data).expect("serialise database");
-    file.write_all(payload.as_bytes())
-        .expect("write database file");
+fn write_payload(file: &mut impl PersistWriter, payload: &[u8]) -> io::Result<()> {
+    file.write_all(payload)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(())
+}
+
+/// Write `data` as YAML to `tmp`, flush, fsync, then rename over `path`.
+fn write_and_rename(tmp: &Path, path: &Path, data: &HashMap<String, String>) -> io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(tmp)?;
+
+    let payload = serde_yaml::to_string(data).expect("serializing string map should not fail");
+    #[cfg(test)]
+    let write_result = if tmp.file_name() == Some(OsStr::new("goto-force-write-error.tmp")) {
+        Err(io::Error::other("forced write error"))
+    } else {
+        write_payload(&mut file, payload.as_bytes())
+    };
+    #[cfg(not(test))]
+    let write_result = write_payload(&mut file, payload.as_bytes());
+    write_result?;
+    drop(file);
+
+    fs::rename(tmp, path)
+}
+
+/// Compute the sibling temp-file path used during atomic rewrites.
+fn tmp_path_for(path: &Path) -> PathBuf {
+    let mut file_name = path
+        .file_name()
+        .map_or_else(|| OsString::from("database"), OsStr::to_os_string);
+    file_name.push(".tmp");
+    path.with_file_name(file_name)
 }
 
 /// browse redirects to the long URL hidden behind a short URL, or returns a
@@ -210,7 +363,10 @@ async fn read_target(mut payload: web::Payload) -> Result<String, String> {
             break;
         };
 
-        let chunk = chunk.map_err(|err| err.to_string())?;
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(err) => return Err(err.to_string()),
+        };
         // limit max size of in-memory payload
         if (body.len() + chunk.len()) > MAX_SIZE {
             return Err("overflow".to_string());
@@ -226,6 +382,24 @@ enum UpsertShortUrlCommand {
     UpdateShortUrl { id: String },
 }
 
+/// Reason an upsert can fail.
+///
+/// Separated into `BadRequest` (map to 400) and `Persist` (map to 500) so
+/// HTTP handlers can classify responses correctly without string-matching.
+#[derive(Debug, PartialEq)]
+enum UpsertError {
+    BadRequest(String),
+    Persist(String),
+}
+
+impl std::fmt::Display for UpsertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpsertError::BadRequest(s) | UpsertError::Persist(s) => write!(f, "{s}"),
+        }
+    }
+}
+
 /// Create a short URL redirecting to a long URL.
 ///
 /// If you pass an `id` a parameter, your short URL will be` /{id}`.
@@ -238,9 +412,9 @@ fn upsert_short_url(
     db: web::Data<Db>,
     target: &str,
     command: UpsertShortUrlCommand,
-) -> Result<String, String> {
+) -> Result<String, UpsertError> {
     if let Err(err) = Url::parse(target) {
-        return Err(format!("malformed URL: {err}"));
+        return Err(UpsertError::BadRequest(format!("malformed URL: {err}")));
     };
 
     let id = match &command {
@@ -253,17 +427,32 @@ fn upsert_short_url(
     let previous_target = db.get(id).cloned();
     if let Some(previous_target) = previous_target {
         match command {
-            UpsertShortUrlCommand::CreateShortUrl { .. } => Err("already registered".to_string()),
+            UpsertShortUrlCommand::CreateShortUrl { .. } => {
+                Err(UpsertError::BadRequest("already registered".to_string()))
+            }
             UpsertShortUrlCommand::UpdateShortUrl { .. } => {
-                db.insert(id, target);
+                if let Err(err) = db.insert(id, target) {
+                    return Err(UpsertError::Persist(err.to_string()));
+                }
                 Ok(format!(
                     "/{id} now redirects to {target} (was {previous_target})"
                 ))
             }
         }
     } else {
-        db.insert(id, target);
+        if let Err(err) = db.insert(id, target) {
+            return Err(UpsertError::Persist(err.to_string()));
+        }
         Ok(format!("/{id} now redirects to {target}"))
+    }
+}
+
+impl From<UpsertError> for actix_web::Error {
+    fn from(err: UpsertError) -> Self {
+        match err {
+            UpsertError::BadRequest(msg) => error::ErrorBadRequest(msg),
+            UpsertError::Persist(msg) => error::ErrorInternalServerError(msg),
+        }
     }
 }
 
@@ -274,10 +463,13 @@ async fn create_with_id(
     path: web::Path<(String,)>,
 ) -> impl Responder {
     let (id,) = path.into_inner();
-    let target = read_target(payload).await.map_err(error::ErrorBadRequest)?;
+    let target = match read_target(payload).await {
+        Ok(target) => target,
+        Err(err) => return Err(error::ErrorBadRequest(err)),
+    };
 
     let command = UpsertShortUrlCommand::CreateShortUrl { id: Some(id) };
-    upsert_short_url(db, &target, command).map_err(error::ErrorBadRequest)
+    upsert_short_url(db, &target, command).map_err(actix_web::Error::from)
 }
 
 #[put("/{id}")]
@@ -287,10 +479,13 @@ async fn update_with_id(
     path: web::Path<(String,)>,
 ) -> impl Responder {
     let (id,) = path.into_inner();
-    let target = read_target(payload).await.map_err(error::ErrorBadRequest)?;
+    let target = match read_target(payload).await {
+        Ok(target) => target,
+        Err(err) => return Err(error::ErrorBadRequest(err)),
+    };
 
     let command = UpsertShortUrlCommand::UpdateShortUrl { id };
-    upsert_short_url(db, &target, command).map_err(error::ErrorBadRequest)
+    upsert_short_url(db, &target, command).map_err(actix_web::Error::from)
 }
 
 #[post("/")]
@@ -301,7 +496,7 @@ async fn create_random(db: web::Data<Db>, payload: web::Payload) -> impl Respond
     };
 
     let command = UpsertShortUrlCommand::CreateShortUrl { id: None };
-    upsert_short_url(db, &target, command).map_err(error::ErrorBadRequest)
+    upsert_short_url(db, &target, command).map_err(actix_web::Error::from)
 }
 
 #[derive(StructOpt)]
@@ -338,19 +533,22 @@ impl Cli {
     }
 
     fn open_db(&self) -> Result<Db, String> {
-        let Some(path) = &self.database else {
+        let Some(path_str) = &self.database else {
             return Ok(Db::default());
         };
 
-        let path = std::path::Path::new(&path);
+        let path = Path::new(path_str);
 
-        let mut file = OpenOptions::new()
+        let mut file = match OpenOptions::new()
             .write(true)
             .create(true)
             .read(true)
             .truncate(false)
             .open(path)
-            .map_err(|err| err.to_string())?;
+        {
+            Ok(file) => file,
+            Err(err) => return Err(err.to_string()),
+        };
 
         let mut buf = String::new();
         let Ok(len) = file.read_to_string(&mut buf) else {
@@ -366,7 +564,8 @@ impl Cli {
             Database::new(yaml_contents)
         };
 
-        Ok(Db::new(database.with_persistence(file)))
+        drop(file);
+        Ok(Db::new(database.with_persistence(path.to_path_buf())))
     }
 }
 
@@ -437,8 +636,8 @@ mod cli_tests {
 
         assert!(matches!(
             &data.persistence,
-            Some(file)
-                if file.metadata().unwrap().is_file()
+            Some(path)
+                if path.metadata().unwrap().is_file()
         ));
     }
 
@@ -536,6 +735,7 @@ mod cli_tests {
 }
 
 #[actix_web::main]
+#[cfg(not(coverage))]
 #[cfg(not(tarpaulin_include))]
 async fn main() -> std::io::Result<()> {
     let args = Cli::from_args();
@@ -574,6 +774,76 @@ mod tests {
     }
 
     #[test]
+    fn test_persist_error_display() {
+        assert_eq!("persist: boom", PersistError("boom".to_string()).to_string());
+    }
+
+    #[test]
+    fn test_upsert_error_display() {
+        assert_eq!("bad", UpsertError::BadRequest("bad".to_string()).to_string());
+        assert_eq!(
+            "persist failed",
+            UpsertError::Persist("persist failed".to_string()).to_string()
+        );
+    }
+
+    #[test]
+    fn test_upsert_error_into_actix_error() {
+        let bad_request = actix_web::Error::from(UpsertError::BadRequest("bad".to_string()));
+        assert_eq!(
+            actix_web::http::StatusCode::BAD_REQUEST,
+            bad_request.as_response_error().status_code()
+        );
+
+        let persist = actix_web::Error::from(UpsertError::Persist("persist".to_string()));
+        assert_eq!(
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            persist.as_response_error().status_code()
+        );
+    }
+
+    #[test]
+    fn test_insert_rollback_restores_previous_value_on_persist_failure() {
+        use std::env::temp_dir;
+
+        let base_dir = temp_dir().join(format!(
+            "goto-insert-rollback-existing-{}",
+            std::process::id()
+        ));
+        let persistence_path = base_dir.join("missing-parent").join("db.yml");
+
+        let mut database = Database::new(HashMap::from([(
+            "foo".to_string(),
+            "https://old.example".to_string(),
+        )]))
+        .with_persistence(persistence_path);
+
+        let err = database.insert("foo", "https://new.example").unwrap_err();
+        assert!(err.to_string().contains("persist:"));
+        assert_eq!(
+            Some(&"https://old.example".to_string()),
+            database.get("foo")
+        );
+    }
+
+    #[test]
+    fn test_insert_rollback_removes_new_key_on_persist_failure() {
+        use std::env::temp_dir;
+
+        let base_dir = temp_dir().join(format!(
+            "goto-insert-rollback-new-{}",
+            std::process::id()
+        ));
+        let persistence_path = base_dir.join("missing-parent").join("db.yml");
+
+        let mut database = Database::new(HashMap::new()).with_persistence(persistence_path);
+
+        let err = database.insert("foo", "https://new.example").unwrap_err();
+        assert!(err.to_string().contains("persist:"));
+        assert_eq!(None, database.get("foo"));
+    }
+
+    #[test]
     fn test_create_short_malformed_url() {
         let db: Db = Db::new(Database::new(HashMap::new()));
 
@@ -582,7 +852,9 @@ mod tests {
             id: Some("hello".to_string()),
         };
         assert_eq!(
-            Err("malformed URL: relative URL without a base".to_string()),
+            Err(UpsertError::BadRequest(
+                "malformed URL: relative URL without a base".to_string()
+            )),
             upsert_short_url(web::Data::new(db), &target, command)
         );
     }
@@ -630,7 +902,7 @@ mod tests {
             id: Some(id.to_string()),
         };
         assert_eq!(
-            Err("already registered".to_string()),
+            Err(UpsertError::BadRequest("already registered".to_string())),
             upsert_short_url(web::Data::new(db), target, command)
         );
     }
@@ -653,6 +925,34 @@ mod tests {
     }
 
     #[test]
+    fn test_upsert_short_url_returns_persist_error_when_updating_existing_key() {
+        use std::env::temp_dir;
+
+        let path = temp_dir()
+            .join(format!("goto-upsert-existing-{}", std::process::id()))
+            .join("missing")
+            .join("db.yml");
+        let db = Db::new(
+            Database::new(HashMap::from([(
+                "hello".to_string(),
+                "https://google.com".to_string(),
+            )]))
+            .with_persistence(path),
+        );
+
+        let command = UpsertShortUrlCommand::UpdateShortUrl {
+            id: "hello".to_string(),
+        };
+        let result = upsert_short_url(Data::new(db), "https://yahoo.com", command).unwrap_err();
+
+        let err = actix_web::Error::from(result);
+        assert_eq!(
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            err.as_response_error().status_code()
+        );
+    }
+
+    #[test]
     fn test_update_url_that_does_not_exist() {
         let id = "hello";
         let db: Db = Db::new(Database::new(HashMap::new()));
@@ -662,6 +962,28 @@ mod tests {
         assert_eq!(
             Ok("/hello now redirects to https://google.com".to_string()),
             upsert_short_url(web::Data::new(db), target, command)
+        );
+    }
+
+    #[test]
+    fn test_upsert_short_url_returns_persist_error_when_creating_new_key() {
+        use std::env::temp_dir;
+
+        let path = temp_dir()
+            .join(format!("goto-upsert-new-{}", std::process::id()))
+            .join("missing")
+            .join("db.yml");
+        let db = Db::new(Database::new(HashMap::new()).with_persistence(path));
+
+        let command = UpsertShortUrlCommand::UpdateShortUrl {
+            id: "hello".to_string(),
+        };
+        let result = upsert_short_url(Data::new(db), "https://google.com", command).unwrap_err();
+
+        let err = actix_web::Error::from(result);
+        assert_eq!(
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            err.as_response_error().status_code()
         );
     }
 
@@ -676,8 +998,6 @@ mod tests {
     #[test]
     fn test_write_database() {
         use std::env::temp_dir;
-        use std::fs::File;
-        use std::io::Read;
 
         let mut database: HashMap<String, String> = HashMap::new();
         database.insert(
@@ -687,16 +1007,190 @@ mod tests {
         let want = serde_yaml::to_string(&database).unwrap();
 
         let tmp_dir = temp_dir();
-        let tmpfile_path = format!("{}/persist_database.yml", tmp_dir.to_str().unwrap());
-        let mut file = File::create(&tmpfile_path).unwrap();
+        let tmpfile_path = PathBuf::from(format!(
+            "{}/persist_database.yml",
+            tmp_dir.to_str().unwrap()
+        ));
+        let _ = std::fs::remove_file(&tmpfile_path);
 
-        persist_database(&mut file, &database);
+        persist_database(&tmpfile_path, &database).unwrap();
 
-        let mut file = File::open(&tmpfile_path).unwrap();
-        let mut got = String::new();
-        file.read_to_string(&mut got).unwrap();
+        let got = std::fs::read_to_string(&tmpfile_path).unwrap();
 
         assert_eq!(want, got);
+    }
+
+    struct MockPersistWriter {
+        fail_on_write: bool,
+        fail_on_flush: bool,
+        fail_on_sync: bool,
+        bytes: Vec<u8>,
+    }
+
+    impl PersistWriter for MockPersistWriter {
+        fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+            if self.fail_on_write {
+                return Err(io::Error::other("write failed"));
+            }
+
+            self.bytes.extend_from_slice(buf);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if self.fail_on_flush {
+                return Err(io::Error::other("flush failed"));
+            }
+
+            Ok(())
+        }
+
+        fn sync_all(&mut self) -> io::Result<()> {
+            if self.fail_on_sync {
+                return Err(io::Error::other("sync failed"));
+            }
+
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_write_payload() {
+        let mut writer = MockPersistWriter {
+            fail_on_write: false,
+            fail_on_flush: false,
+            fail_on_sync: false,
+            bytes: Vec::new(),
+        };
+
+        write_payload(&mut writer, b"hello").unwrap();
+        assert_eq!(b"hello", writer.bytes.as_slice());
+    }
+
+    #[test]
+    fn test_write_payload_write_error() {
+        let mut writer = MockPersistWriter {
+            fail_on_write: true,
+            fail_on_flush: false,
+            fail_on_sync: false,
+            bytes: Vec::new(),
+        };
+
+        let err = write_payload(&mut writer, b"hello").unwrap_err();
+        assert_eq!(io::ErrorKind::Other, err.kind());
+    }
+
+    #[test]
+    fn test_write_payload_flush_error() {
+        let mut writer = MockPersistWriter {
+            fail_on_write: false,
+            fail_on_flush: true,
+            fail_on_sync: false,
+            bytes: Vec::new(),
+        };
+
+        let err = write_payload(&mut writer, b"hello").unwrap_err();
+        assert_eq!(io::ErrorKind::Other, err.kind());
+    }
+
+    #[test]
+    fn test_write_payload_sync_error() {
+        let mut writer = MockPersistWriter {
+            fail_on_write: false,
+            fail_on_flush: false,
+            fail_on_sync: true,
+            bytes: Vec::new(),
+        };
+
+        let err = write_payload(&mut writer, b"hello").unwrap_err();
+        assert_eq!(io::ErrorKind::Other, err.kind());
+    }
+
+    #[test]
+    fn test_write_and_rename_propagates_write_error() {
+        use std::env::temp_dir;
+
+        let tmp = temp_dir().join("goto-force-write-error.tmp");
+        let path = temp_dir().join(format!("goto-write-and-rename-out-{}", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&path);
+
+        let data = HashMap::from([("foo".to_string(), "bar".to_string())]);
+        let err = write_and_rename(&tmp, &path, &data).unwrap_err();
+
+        assert_eq!(io::ErrorKind::Other, err.kind());
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_persist_database_removes_tmp_on_rename_failure() {
+        use std::env::temp_dir;
+
+        let path = temp_dir().join(format!("goto-persist-dir-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+
+        let tmp_path = tmp_path_for(&path);
+        let _ = std::fs::remove_file(&tmp_path);
+
+        let data = HashMap::from([("foo".to_string(), "bar".to_string())]);
+        let result = persist_database(&path, &data);
+
+        assert!(result.is_err());
+        assert!(!tmp_path.exists(), "tmp file should be cleaned up on failure");
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[test]
+    fn test_tmp_path_for_path_without_filename() {
+        let path = Path::new("/");
+        assert_eq!(PathBuf::from("/database.tmp"), tmp_path_for(path));
+    }
+
+    #[test]
+    fn test_open_db_open_error() {
+        use std::env::temp_dir;
+
+        let path = temp_dir().join(format!("goto-open-db-dir-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(path.to_str().unwrap().to_string()),
+        };
+
+        let result = cli.open_db();
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&path);
+    }
+
+    #[actix_rt::test]
+    async fn test_read_target_payload_error() {
+        use actix_web::error::PayloadError;
+        use actix_web::FromRequest;
+        use std::pin::Pin;
+
+        let stream = futures::stream::once(async {
+            Err::<web::Bytes, PayloadError>(PayloadError::EncodingCorrupted)
+        });
+        let mut payload = actix_web::dev::Payload::from(
+            Box::pin(stream)
+                as Pin<Box<dyn futures::Stream<Item = Result<web::Bytes, PayloadError>>>>,
+        );
+        let req = actix_web::test::TestRequest::default().to_http_request();
+        let payload = web::Payload::from_request(&req, &mut payload)
+            .await
+            .unwrap();
+
+        let result = read_target(payload).await;
+        assert_eq!(Err("can not decode content-encoding".to_string()), result);
     }
 }
 
@@ -830,6 +1324,31 @@ mod integration_tests {
 
         let body = resp.into_body().try_into_bytes().unwrap();
         assert_eq!("overflow", body);
+    }
+
+    #[actix_rt::test]
+    async fn integration_test_update_shortened_url_bad_body() {
+        let req = test::TestRequest::put()
+            .uri("/hello")
+            .set_payload(vec![0, 159, 146, 150])
+            .to_request();
+
+        let db: Db = Db::new(Database::new(HashMap::new()));
+
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(db))
+                .service(update_with_id),
+        )
+        .await;
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body = resp.into_body().try_into_bytes().unwrap();
+        assert_eq!(
+            "invalid request body: invalid utf-8 sequence of 1 bytes from index 1",
+            body
+        );
     }
 
     // follow an existing shorturl

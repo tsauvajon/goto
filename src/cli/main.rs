@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+#[cfg(all(not(coverage), not(tarpaulin_include)))]
 use home::home_dir;
 use hyper::{Body, Method, Request};
 use hyper::{Client as HyperClient, Uri};
@@ -299,7 +300,10 @@ fn test_display_location_verbose() {
     assert_eq!(b"redirecting to http://hi.there\n".to_vec(), result,);
 }
 
-#[cfg(not(tarpaulin_include))]
+#[cfg(any(coverage, tarpaulin_include))]
+fn open_location(_loc: &str, _browser: bool) {}
+
+#[cfg(all(not(coverage), not(tarpaulin_include)))]
 fn open_location(loc: &str, browser: bool) {
     if browser {
         webbrowser::open(loc).unwrap();
@@ -313,6 +317,10 @@ struct Config {
     silent: Option<bool>,
     no_browser: Option<bool>,
 }
+
+trait ReadWrite: std::io::Read + std::io::Write {}
+
+impl<T: std::io::Read + std::io::Write> ReadWrite for T {}
 
 impl Default for Config {
     fn default() -> Self {
@@ -328,7 +336,7 @@ impl Default for Config {
 fn open_or_create_config(filepath: &PathBuf) -> Result<Config, GoToError> {
     let _ = std::fs::create_dir_all(filepath.parent().unwrap());
 
-    let file = OpenOptions::new()
+    let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .read(true)
@@ -336,12 +344,10 @@ fn open_or_create_config(filepath: &PathBuf) -> Result<Config, GoToError> {
         .open(filepath)
         .map_err(|err| GoToError::CliError(format!("open config file: {err}")))?;
 
-    read_or_write_config(file)
+    read_or_write_config(&mut file)
 }
 
-fn read_or_write_config(
-    mut file: impl std::io::Read + std::io::Write,
-) -> Result<Config, GoToError> {
+fn read_or_write_config(file: &mut dyn ReadWrite) -> Result<Config, GoToError> {
     let mut buf = String::new();
     match file.read_to_string(&mut buf) {
         Err(err) => Err(GoToError::CliError(format!("read config file: {err}"))),
@@ -477,44 +483,29 @@ mod config_tests {
         );
     }
 
-    struct RWMockCantRead {}
+    struct RWMock {
+        read_err: Option<Error>,
+        write_err: Option<Error>,
+        data: Vec<u8>,
+    }
 
-    impl std::io::Read for RWMockCantRead {
+    impl std::io::Read for RWMock {
         fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
-            Err(Error::other("oh no!"))
+            match self.read_err.take() {
+                Some(err) => Err(err),
+                None => Ok(0),
+            }
         }
     }
 
-    impl std::io::Write for RWMockCantRead {
-        fn write(&mut self, _buf: &[u8]) -> Result<usize> {
-            todo!()
-        }
+    impl std::io::Write for RWMock {
+        fn write(&mut self, buf: &[u8]) -> Result<usize> {
+            if let Some(err) = self.write_err.take() {
+                return Err(err);
+            }
 
-        fn flush(&mut self) -> Result<()> {
-            todo!()
-        }
-    }
-
-    #[test]
-    fn test_cannot_read_config() {
-        let mut mock_file = RWMockCantRead {};
-
-        let got = read_or_write_config(&mut mock_file);
-        let want = Err(GoToError::CliError("read config file: oh no!".to_string()));
-        assert_eq!(want, got);
-    }
-
-    struct RWMockCantWrite {}
-
-    impl std::io::Read for RWMockCantWrite {
-        fn read(&mut self, _buf: &mut [u8]) -> Result<usize> {
-            Ok(0)
-        }
-    }
-
-    impl std::io::Write for RWMockCantWrite {
-        fn write(&mut self, _buf: &[u8]) -> Result<usize> {
-            Err(Error::other("that went terribly wrong!"))
+            self.data.extend_from_slice(buf);
+            Ok(buf.len())
         }
 
         fn flush(&mut self) -> Result<()> {
@@ -523,8 +514,25 @@ mod config_tests {
     }
 
     #[test]
+    fn test_cannot_read_config() {
+        let mut mock_file = RWMock {
+            read_err: Some(Error::other("oh no!")),
+            write_err: None,
+            data: Vec::new(),
+        };
+
+        let got = read_or_write_config(&mut mock_file);
+        let want = Err(GoToError::CliError("read config file: oh no!".to_string()));
+        assert_eq!(want, got);
+    }
+
+    #[test]
     fn test_cannot_write_config() {
-        let mut mock_file = RWMockCantWrite {};
+        let mut mock_file = RWMock {
+            read_err: None,
+            write_err: Some(Error::other("that went terribly wrong!")),
+            data: Vec::new(),
+        };
 
         let got = read_or_write_config(&mut mock_file);
         let want = Err(GoToError::CliError(
@@ -532,13 +540,27 @@ mod config_tests {
         ));
         assert_eq!(want, got);
     }
+
+    #[test]
+    fn test_rwmock_success_path() {
+        let mut mock_file = RWMock {
+            read_err: None,
+            write_err: None,
+            data: Vec::new(),
+        };
+
+        let got = read_or_write_config(&mut mock_file).unwrap();
+        assert_eq!(Config::default(), got);
+        assert!(!mock_file.data.is_empty());
+        mock_file.flush().unwrap();
+    }
 }
 
 #[cfg(test)]
 mod cant_read_config_tests {}
 
 #[tokio::main]
-#[cfg(not(tarpaulin_include))]
+#[cfg(all(not(coverage), not(tarpaulin_include)))]
 async fn main() -> Result<(), GoToError> {
     let args = Args::from_args();
 
@@ -641,6 +663,7 @@ mod cli_test {
 
         get_long_url_called_with: Option<String>,
         want_get_long_url_called_with: Option<String>,
+        get_long_url_result: Option<Result<String, GoToError>>,
     }
 
     impl MockClient {
@@ -654,6 +677,7 @@ mod cli_test {
 
                 get_long_url_called_with: None,
                 want_get_long_url_called_with: None,
+                get_long_url_result: Some(Ok(String::new())),
             }
         }
     }
@@ -672,7 +696,7 @@ mod cli_test {
 
         async fn get_long_url(mut self, shorturl: String) -> Result<String, GoToError> {
             self.get_long_url_called_with = Some(shorturl);
-            Ok(String::new())
+            self.get_long_url_result.take().unwrap()
         }
     }
 
@@ -732,6 +756,48 @@ mod cli_test {
         let got = cli.run().await;
         assert_eq!(Ok(()), got);
     }
+
+    #[actix_rt::test]
+    async fn test_cli_update_existing() {
+        let mut client = MockClient::new();
+        client.want_update_url_called_with =
+            Some(("hello".to_string(), "http://world".to_string()));
+
+        let cli = Cli {
+            options: CliOptions {
+                shorturl: "hello".to_string(),
+                target: Some("http://world".to_string()),
+                always_replace: true,
+                verbose: false,
+                open_browser: false,
+            },
+            client,
+        };
+
+        let got = cli.run().await;
+        assert_eq!(Ok(()), got);
+    }
+
+    #[actix_rt::test]
+    async fn test_cli_get_long_url_error() {
+        let mut client = MockClient::new();
+        client.want_get_long_url_called_with = Some("hi".to_string());
+        client.get_long_url_result = Some(Err(GoToError::ApiError("boom".to_string())));
+
+        let cli = Cli {
+            options: CliOptions {
+                shorturl: "hi".to_string(),
+                target: None,
+                always_replace: false,
+                verbose: false,
+                open_browser: false,
+            },
+            client,
+        };
+
+        let got = cli.run().await;
+        assert_eq!(Err(GoToError::ApiError("boom".to_string())), got);
+    }
 }
 
 #[cfg(test)]
@@ -747,6 +813,7 @@ mod cli_errors_test {
 
         get_long_url_called_with: Option<String>,
         want_get_long_url_called_with: Option<String>,
+        get_long_url_result: Option<Result<String, GoToError>>,
     }
 
     impl MockClient {
@@ -760,6 +827,7 @@ mod cli_errors_test {
 
                 get_long_url_called_with: None,
                 want_get_long_url_called_with: None,
+                get_long_url_result: Some(Ok(String::new())),
             }
         }
     }
@@ -778,7 +846,7 @@ mod cli_errors_test {
 
         async fn get_long_url(mut self, shorturl: String) -> Result<String, GoToError> {
             self.get_long_url_called_with = Some(shorturl);
-            Ok(String::new())
+            self.get_long_url_result.take().unwrap()
         }
     }
 
@@ -853,6 +921,27 @@ mod cli_errors_test {
         };
         cli.run().await.unwrap()
     }
+
+    #[actix_rt::test]
+    async fn test_cli_get_long_url_error() {
+        let mut client = MockClient::new();
+        client.want_get_long_url_called_with = Some("hi".to_string());
+        client.get_long_url_result = Some(Err(GoToError::ApiError("boom".to_string())));
+
+        let cli = Cli {
+            options: CliOptions {
+                shorturl: "hi".to_string(),
+                target: None,
+                always_replace: false,
+                verbose: false,
+                open_browser: false,
+            },
+            client,
+        };
+
+        let got = cli.run().await;
+        assert_eq!(Err(GoToError::ApiError("boom".to_string())), got);
+    }
 }
 
 struct HttpClient {
@@ -879,7 +968,7 @@ impl HttpClient {
             .method(method)
             .uri(uri)
             .body(Body::from(target))
-            .map_err(|err| GoToError::CliError(err.to_string()))?;
+            .expect("request builder should not fail for valid method, uri, and body");
 
         let resp = client
             .request(req)
@@ -1177,5 +1266,36 @@ mod http_client_tests {
             Err(GoToError::CliError("invalid uri character".to_string())),
             res
         );
+    }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_transport_err() {
+        let client = HttpClient::new("http://127.0.0.1:1".to_string());
+        let res = client.get_long_url("shorturl4".to_string()).await;
+
+        assert!(matches!(res, Err(GoToError::ApiError(_))));
+    }
+
+    #[actix_rt::test]
+    async fn test_create_new_invalid_uri() {
+        let client = HttpClient::new("this is an invalid url".to_string());
+        let res = client
+            .create_new("shorturl4".to_string(), "http://target.com".to_string())
+            .await;
+
+        assert_eq!(
+            Err(GoToError::CliError("invalid uri character".to_string())),
+            res
+        );
+    }
+
+    #[actix_rt::test]
+    async fn test_create_new_transport_err() {
+        let client = HttpClient::new("http://127.0.0.1:1".to_string());
+        let res = client
+            .create_new("shorturl4".to_string(), "http://target.com".to_string())
+            .await;
+
+        assert!(matches!(res, Err(GoToError::ApiError(_))));
     }
 }
