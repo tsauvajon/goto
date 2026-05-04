@@ -336,6 +336,18 @@ impl Default for Config {
 fn open_or_create_config(filepath: &PathBuf) -> Result<Config, GoToError> {
     let _ = std::fs::create_dir_all(filepath.parent().unwrap());
 
+    // Read-only first: works on read-only filesystems (e.g. /nix/store) where
+    // an existing valid config does not need to be rewritten.
+    if filepath.exists() {
+        let buf = std::fs::read_to_string(filepath)
+            .map_err(|err| GoToError::CliError(format!("read config file: {err}")))?;
+        if !buf.is_empty() {
+            return serde_yaml::from_str(&buf)
+                .map_err(|err| GoToError::CliError(format!("parse config data: {err}")));
+        }
+    }
+
+    // File missing or empty: create it and populate with defaults.
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -465,6 +477,36 @@ mod config_tests {
             "{:?}",
             err
         );
+    }
+
+    #[test]
+    fn test_open_readonly_config() {
+        // Regression: reading a valid config from a read-only file (e.g. when the
+        // file is symlinked into /nix/store) must not fail.
+        let mut filepath = temp_dir();
+        filepath.push("test_open_readonly_config.yml");
+
+        // Make sure we start clean even if a previous run left the file behind.
+        let _ = std::fs::remove_file(&filepath);
+
+        let mut file = File::create(&filepath).unwrap();
+        file.write_all(b"api_url: \"http://readonly.example\"\n")
+            .unwrap();
+        drop(file);
+
+        let mut perms = std::fs::metadata(&filepath).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&filepath, perms).unwrap();
+
+        let got = open_or_create_config(&filepath).unwrap();
+        assert_eq!(Some("http://readonly.example".to_string()), got.api_url);
+
+        // Restore writable perms so the temp file can be cleaned up by the OS.
+        let mut perms = std::fs::metadata(&filepath).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(&filepath, perms);
+        let _ = std::fs::remove_file(&filepath);
     }
 
     #[test]
