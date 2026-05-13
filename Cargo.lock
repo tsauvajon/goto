@@ -773,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "goto"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "actix-files",
  "actix-rt",

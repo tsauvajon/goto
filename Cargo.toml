@@ -1,6 +1,6 @@
 [package]
 name = "goto"
-version = "2.0.2"
+version = "2.0.3"
 edition = "2018"
 default-run = "goto-api"
 repository = "https://github.com/tsauvajon/goto"
