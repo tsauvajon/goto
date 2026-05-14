@@ -38,19 +38,21 @@ redirecting to https://linkedin.com/in/tsauvajon ...* Closing connection 0
     clippy::cargo
 )]
 
+use std::{
+    collections::BTreeMap,
+    ffi::{OsStr, OsString},
+    fs::{self, OpenOptions},
+    io::{self, Read, Write},
+    path::{Path, PathBuf},
+    sync::RwLock,
+};
+
 #[cfg(all(not(coverage), not(tarpaulin_include)))]
 use actix_files::Files;
-use actix_web::web::Data;
-use actix_web::{error, get, post, put, web, App, HttpResponse, Responder};
 #[cfg(all(not(coverage), not(tarpaulin_include)))]
 use actix_web::HttpServer;
+use actix_web::{error, get, post, put, web, web::Data, App, HttpResponse, Responder};
 use futures::StreamExt;
-use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 use structopt::StructOpt;
 use url::Url;
 
@@ -72,7 +74,7 @@ impl std::fmt::Display for PersistError {
 }
 
 struct Database {
-    data: HashMap<String, String>,
+    data: BTreeMap<String, String>,
     persistence: Option<PathBuf>,
 }
 
@@ -98,7 +100,7 @@ impl PersistWriter for std::fs::File {
 
 impl Default for Database {
     fn default() -> Self {
-        Self::new(HashMap::new())
+        Self::new(BTreeMap::new())
     }
 }
 
@@ -129,7 +131,7 @@ impl Database {
         Ok(previous_value)
     }
 
-    fn new(data: HashMap<String, String>) -> Self {
+    fn new(data: BTreeMap<String, String>) -> Self {
         Database {
             data,
             persistence: None,
@@ -149,7 +151,7 @@ fn test_insert_data_returns_previous() {
     let dir = temp_dir();
     let tmpfile_path = PathBuf::from(format!("{}/tmpfile2.txt", dir.to_str().unwrap()));
 
-    let mut data = Database::new(HashMap::new()).with_persistence(tmpfile_path);
+    let mut data = Database::new(BTreeMap::new()).with_persistence(tmpfile_path);
     let outcome = data.insert("hi", "qwerty").unwrap();
     assert_eq!(None, outcome);
 
@@ -159,8 +161,7 @@ fn test_insert_data_returns_previous() {
 
 #[test]
 fn test_insert_persists_updates() {
-    use std::env::temp_dir;
-    use std::fs;
+    use std::{env::temp_dir, fs};
 
     let tmp_dir = temp_dir();
     let tmpfile_path = PathBuf::from(format!(
@@ -169,7 +170,7 @@ fn test_insert_persists_updates() {
     ));
 
     {
-        let mut data = Database::new(HashMap::new()).with_persistence(tmpfile_path.clone());
+        let mut data = Database::new(BTreeMap::new()).with_persistence(tmpfile_path.clone());
         data.insert("foo", "bar").unwrap();
         data.insert("foo", "baz").unwrap();
     }
@@ -190,7 +191,7 @@ fn test_insert_atomic_no_tmp_left_after_success() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(tmp_path_for(&db_path));
 
-    let mut data = Database::new(HashMap::new()).with_persistence(db_path.clone());
+    let mut data = Database::new(BTreeMap::new()).with_persistence(db_path.clone());
     data.insert("a", "http://example.com/a").unwrap();
     data.insert("b", "http://example.com/b").unwrap();
     data.insert("a", "http://example.com/a2").unwrap();
@@ -281,7 +282,7 @@ impl Db {
 }
 
 /// Persist the entire in-memory database to disk as YAML, atomically.
-fn persist_database(path: &Path, data: &HashMap<String, String>) -> io::Result<()> {
+fn persist_database(path: &Path, data: &BTreeMap<String, String>) -> io::Result<()> {
     let tmp = tmp_path_for(path);
     let result = write_and_rename(&tmp, path, data);
     if result.is_err() {
@@ -299,7 +300,7 @@ fn write_payload(file: &mut impl PersistWriter, payload: &[u8]) -> io::Result<()
 }
 
 /// Write `data` as YAML to `tmp`, flush, fsync, then rename over `path`.
-fn write_and_rename(tmp: &Path, path: &Path, data: &HashMap<String, String>) -> io::Result<()> {
+fn write_and_rename(tmp: &Path, path: &Path, data: &BTreeMap<String, String>) -> io::Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -556,9 +557,9 @@ impl Cli {
         };
 
         let database = if len == 0 {
-            Database::new(HashMap::new())
+            Database::new(BTreeMap::new())
         } else {
-            let yaml_contents: HashMap<String, String> =
+            let yaml_contents: BTreeMap<String, String> =
                 serde_yaml::from_str(&buf).map_err(|err| format!("parse data: {err}"))?;
 
             Database::new(yaml_contents)
@@ -643,8 +644,7 @@ mod cli_tests {
 
     #[test]
     fn test_open_db_existing_file() {
-        use std::env::temp_dir;
-        use std::fs::File;
+        use std::{env::temp_dir, fs::File};
 
         let dir = temp_dir();
         let tmpfile_path = format!("{}/tmpfile.txt", dir.to_str().unwrap());
@@ -664,9 +664,7 @@ mod cli_tests {
 
     #[test]
     fn test_open_db_existing_file_invalid_utf8() {
-        use std::env::temp_dir;
-        use std::fs::File;
-        use std::io::Write;
+        use std::{env::temp_dir, fs::File, io::Write};
 
         let dir = temp_dir();
         let tmpfile_path = format!("{}/tmpfile-invalid-utf8.txt", dir.to_str().unwrap());
@@ -688,9 +686,7 @@ mod cli_tests {
 
     #[test]
     fn test_open_db_existing_file_with_data() {
-        use std::env::temp_dir;
-        use std::fs::File;
-        use std::io::Write;
+        use std::{env::temp_dir, fs::File, io::Write};
 
         let dir = temp_dir();
         let tmpfile_path = format!("{}/temporary-file.txt", dir.to_str().unwrap());
@@ -712,9 +708,7 @@ mod cli_tests {
 
     #[test]
     fn test_open_db_existing_file_with_bad_data() {
-        use std::env::temp_dir;
-        use std::fs::File;
-        use std::io::Write;
+        use std::{env::temp_dir, fs::File, io::Write};
 
         let dir = temp_dir();
         let tmpfile_path = format!("{}/tmpfile1.txt", dir.to_str().unwrap());
@@ -775,12 +769,18 @@ mod tests {
 
     #[test]
     fn test_persist_error_display() {
-        assert_eq!("persist: boom", PersistError("boom".to_string()).to_string());
+        assert_eq!(
+            "persist: boom",
+            PersistError("boom".to_string()).to_string()
+        );
     }
 
     #[test]
     fn test_upsert_error_display() {
-        assert_eq!("bad", UpsertError::BadRequest("bad".to_string()).to_string());
+        assert_eq!(
+            "bad",
+            UpsertError::BadRequest("bad".to_string()).to_string()
+        );
         assert_eq!(
             "persist failed",
             UpsertError::Persist("persist failed".to_string()).to_string()
@@ -812,7 +812,7 @@ mod tests {
         ));
         let persistence_path = base_dir.join("missing-parent").join("db.yml");
 
-        let mut database = Database::new(HashMap::from([(
+        let mut database = Database::new(BTreeMap::from([(
             "foo".to_string(),
             "https://old.example".to_string(),
         )]))
@@ -830,13 +830,10 @@ mod tests {
     fn test_insert_rollback_removes_new_key_on_persist_failure() {
         use std::env::temp_dir;
 
-        let base_dir = temp_dir().join(format!(
-            "goto-insert-rollback-new-{}",
-            std::process::id()
-        ));
+        let base_dir = temp_dir().join(format!("goto-insert-rollback-new-{}", std::process::id()));
         let persistence_path = base_dir.join("missing-parent").join("db.yml");
 
-        let mut database = Database::new(HashMap::new()).with_persistence(persistence_path);
+        let mut database = Database::new(BTreeMap::new()).with_persistence(persistence_path);
 
         let err = database.insert("foo", "https://new.example").unwrap_err();
         assert!(err.to_string().contains("persist:"));
@@ -845,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_create_short_malformed_url() {
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let target = "this is not a valid URL".to_string();
         let command = UpsertShortUrlCommand::CreateShortUrl {
@@ -861,7 +858,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url() {
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let target = "https://google.com".to_string();
         let id = "hello";
@@ -877,7 +874,7 @@ mod tests {
 
     #[test]
     fn test_create_short_url_hashed_id() {
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let target = "https://google.com";
         let command = UpsertShortUrlCommand::CreateShortUrl { id: None };
@@ -893,7 +890,7 @@ mod tests {
     fn test_create_short_url_already_exists() {
         let id = "hello";
 
-        let mut db: HashMap<String, String> = HashMap::new();
+        let mut db: BTreeMap<String, String> = BTreeMap::new();
         db.insert(id.into(), "some existing value".into());
         let db: Db = Db::new(Database::new(db));
 
@@ -910,7 +907,7 @@ mod tests {
     #[test]
     fn test_update_existing_url() {
         let id = "hello";
-        let mut db: HashMap<String, String> = HashMap::new();
+        let mut db: BTreeMap<String, String> = BTreeMap::new();
         db.insert(id.into(), "https://google.com".into());
         let db: Db = Db::new(Database::new(db));
 
@@ -933,7 +930,7 @@ mod tests {
             .join("missing")
             .join("db.yml");
         let db = Db::new(
-            Database::new(HashMap::from([(
+            Database::new(BTreeMap::from([(
                 "hello".to_string(),
                 "https://google.com".to_string(),
             )]))
@@ -955,7 +952,7 @@ mod tests {
     #[test]
     fn test_update_url_that_does_not_exist() {
         let id = "hello";
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let target = "https://google.com";
         let command = UpsertShortUrlCommand::UpdateShortUrl { id: id.to_string() };
@@ -973,7 +970,7 @@ mod tests {
             .join(format!("goto-upsert-new-{}", std::process::id()))
             .join("missing")
             .join("db.yml");
-        let db = Db::new(Database::new(HashMap::new()).with_persistence(path));
+        let db = Db::new(Database::new(BTreeMap::new()).with_persistence(path));
 
         let command = UpsertShortUrlCommand::UpdateShortUrl {
             id: "hello".to_string(),
@@ -991,7 +988,7 @@ mod tests {
     fn test_read_database() {
         let data = "hello: http://hello-world.com\nkey2: value2";
 
-        let yaml_contents: HashMap<String, String> = serde_yaml::from_str(data).unwrap();
+        let yaml_contents: BTreeMap<String, String> = serde_yaml::from_str(data).unwrap();
         println!("{:?}", yaml_contents);
     }
 
@@ -999,7 +996,7 @@ mod tests {
     fn test_write_database() {
         use std::env::temp_dir;
 
-        let mut database: HashMap<String, String> = HashMap::new();
+        let mut database: BTreeMap<String, String> = BTreeMap::new();
         database.insert(
             "tsauvajon".to_string(),
             "https://linkedin.com/in/tsauvajon".to_string(),
@@ -1018,6 +1015,58 @@ mod tests {
         let got = std::fs::read_to_string(&tmpfile_path).unwrap();
 
         assert_eq!(want, got);
+    }
+
+    #[test]
+    fn test_persist_database_writes_keys_alphabetically() {
+        use std::env::temp_dir;
+
+        let database = BTreeMap::from([
+            ("zebra".to_string(), "last".to_string()),
+            ("apple".to_string(), "first".to_string()),
+            ("mango".to_string(), "middle".to_string()),
+        ]);
+        let tmpfile_path =
+            temp_dir().join(format!("goto-persist-sorted-{}.yml", std::process::id()));
+        let _ = std::fs::remove_file(&tmpfile_path);
+
+        persist_database(&tmpfile_path, &database).unwrap();
+
+        let got = std::fs::read_to_string(&tmpfile_path).unwrap();
+        assert_eq!("apple: first\nmango: middle\nzebra: last\n", got);
+
+        let _ = std::fs::remove_file(&tmpfile_path);
+    }
+
+    #[test]
+    fn test_open_db_rewrites_existing_database_alphabetically() {
+        use std::env::temp_dir;
+
+        let tmpfile_path = temp_dir().join(format!(
+            "goto-existing-db-sorted-{}.yml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmpfile_path);
+        std::fs::write(&tmpfile_path, "zebra: last\napple: first\nmango: middle\n").unwrap();
+
+        let cli = Cli {
+            front_dist_directory: None,
+            addr: None,
+            database: Some(tmpfile_path.to_str().unwrap().to_string()),
+        };
+
+        let db = cli.open_db().unwrap();
+        let mut data = db.write().unwrap();
+        data.insert("banana", "second").unwrap();
+        drop(data);
+
+        let got = std::fs::read_to_string(&tmpfile_path).unwrap();
+        assert_eq!(
+            "apple: first\nbanana: second\nmango: middle\nzebra: last\n",
+            got
+        );
+
+        let _ = std::fs::remove_file(&tmpfile_path);
     }
 
     struct MockPersistWriter {
@@ -1115,7 +1164,7 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
         let _ = std::fs::remove_file(&path);
 
-        let data = HashMap::from([("foo".to_string(), "bar".to_string())]);
+        let data = BTreeMap::from([("foo".to_string(), "bar".to_string())]);
         let err = write_and_rename(&tmp, &path, &data).unwrap_err();
 
         assert_eq!(io::ErrorKind::Other, err.kind());
@@ -1135,11 +1184,14 @@ mod tests {
         let tmp_path = tmp_path_for(&path);
         let _ = std::fs::remove_file(&tmp_path);
 
-        let data = HashMap::from([("foo".to_string(), "bar".to_string())]);
+        let data = BTreeMap::from([("foo".to_string(), "bar".to_string())]);
         let result = persist_database(&path, &data);
 
         assert!(result.is_err());
-        assert!(!tmp_path.exists(), "tmp file should be cleaned up on failure");
+        assert!(
+            !tmp_path.exists(),
+            "tmp file should be cleaned up on failure"
+        );
 
         let _ = std::fs::remove_dir_all(&path);
     }
@@ -1173,17 +1225,15 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_read_target_payload_error() {
-        use actix_web::error::PayloadError;
-        use actix_web::FromRequest;
         use std::pin::Pin;
+
+        use actix_web::{error::PayloadError, FromRequest};
 
         let stream = futures::stream::once(async {
             Err::<web::Bytes, PayloadError>(PayloadError::EncodingCorrupted)
         });
-        let mut payload = actix_web::dev::Payload::from(
-            Box::pin(stream)
-                as Pin<Box<dyn futures::Stream<Item = Result<web::Bytes, PayloadError>>>>,
-        );
+        let mut payload = actix_web::dev::Payload::from(Box::pin(stream)
+            as Pin<Box<dyn futures::Stream<Item = Result<web::Bytes, PayloadError>>>>);
         let req = actix_web::test::TestRequest::default().to_http_request();
         let payload = web::Payload::from_request(&req, &mut payload)
             .await
@@ -1196,10 +1246,13 @@ mod tests {
 
 #[cfg(test)]
 mod integration_tests {
+    use actix_web::{
+        body::MessageBody,
+        http::{header::HeaderValue, StatusCode},
+        test,
+    };
+
     use super::*;
-    use actix_web::body::MessageBody;
-    use actix_web::http::header::HeaderValue;
-    use actix_web::{http::StatusCode, test};
 
     // create a new custom shorturl
     #[actix_rt::test]
@@ -1209,7 +1262,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let app = test::init_service(
             App::new()
@@ -1233,7 +1286,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::from([(
+        let db: Db = Db::new(Database::new(BTreeMap::from([(
             "hello".to_string(),
             "https://google.com".to_string(),
         )])));
@@ -1260,7 +1313,7 @@ mod integration_tests {
             .set_payload("https://hello.world")
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let app = test::init_service(
             App::new()
@@ -1286,7 +1339,7 @@ mod integration_tests {
             .set_payload(vec![0, 159, 146, 150])
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let app = test::init_service(
             App::new()
@@ -1311,7 +1364,7 @@ mod integration_tests {
             .set_payload(vec![b'a'; 2000])
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let app = test::init_service(
             App::new()
@@ -1333,14 +1386,10 @@ mod integration_tests {
             .set_payload(vec![0, 159, 146, 150])
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
-        let app = test::init_service(
-            App::new()
-                .app_data(Data::new(db))
-                .service(update_with_id),
-        )
-        .await;
+        let app =
+            test::init_service(App::new().app_data(Data::new(db)).service(update_with_id)).await;
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
@@ -1356,7 +1405,7 @@ mod integration_tests {
     async fn integration_test_use_shortened_url() {
         let req = test::TestRequest::get().uri("/hi").to_request();
 
-        let mut db: HashMap<String, String> = HashMap::new();
+        let mut db: BTreeMap<String, String> = BTreeMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
 
         let db: Db = Db::new(Database::new(db));
@@ -1379,7 +1428,7 @@ mod integration_tests {
         use std::panic;
 
         let req = test::TestRequest::get().uri("/hi").to_request();
-        let mut db: HashMap<String, String> = HashMap::new();
+        let mut db: BTreeMap<String, String> = BTreeMap::new();
         db.insert("hi".into(), "https://linkedin.com/in/tsauvajon".into());
         let db: Db = Db::new(Database::new(db));
 
@@ -1414,7 +1463,7 @@ mod integration_tests {
             .uri("/thislinkdoesntexist")
             .to_request();
 
-        let db: Db = Db::new(Database::new(HashMap::new()));
+        let db: Db = Db::new(Database::new(BTreeMap::new()));
 
         let app = test::init_service(App::new().app_data(Data::new(db)).service(browse)).await;
         let resp = test::call_service(&app, req).await;
@@ -1434,7 +1483,7 @@ mod integration_tests {
             .set_payload("https://something.new")
             .to_request();
 
-        let mut db: HashMap<String, String> = HashMap::new();
+        let mut db: BTreeMap<String, String> = BTreeMap::new();
         db.insert(
             "alreadyexists".into(),
             "https://github.com/tsauvajon".into(),
