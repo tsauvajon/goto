@@ -35,6 +35,10 @@ impl Model {
                 <button onclick=self.link.callback(|_| Msg::Create())>
                     { "Shorten URL" }
                 </button>
+                <br />
+                // Top-level navigation (not a fetch) so the reverse proxy's
+                // interactive login can redirect the whole page and come back.
+                <a href="./_goto/login">{ "Sign in to create links" }</a>
             </>
         }
     }

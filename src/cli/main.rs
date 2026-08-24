@@ -1,13 +1,10 @@
+use std::{convert::identity, fmt::Debug, fs::OpenOptions, path::PathBuf};
+
 use async_trait::async_trait;
 #[cfg(all(not(coverage), not(tarpaulin_include)))]
 use home::home_dir;
-use hyper::{Body, Method, Request};
-use hyper::{Client as HyperClient, Uri};
+use hyper::{Body, Client as HyperClient, Method, Request, Uri};
 use serde::{Deserialize, Serialize};
-use std::convert::identity;
-use std::fmt::Debug;
-use std::fs::OpenOptions;
-use std::path::PathBuf;
 use structopt::StructOpt;
 
 const DEFAULT_API_URL: &str = "http://127.0.0.1:8080";
@@ -107,6 +104,7 @@ mod test_cli_options {
             force_replace: None,
             silent: None,
             no_browser: None,
+            api_key: None,
         };
 
         // default
@@ -161,6 +159,7 @@ mod test_cli_options {
             force_replace: None,
             silent: None,
             no_browser: None,
+            api_key: None,
         };
 
         // default
@@ -215,6 +214,7 @@ mod test_cli_options {
             force_replace: None,
             silent: None,
             no_browser: None,
+            api_key: None,
         };
 
         // default
@@ -316,6 +316,14 @@ struct Config {
     force_replace: Option<bool>,
     silent: Option<bool>,
     no_browser: Option<bool>,
+    /// Optional credential for state-changing requests, sent as
+    /// `Authorization: Basic base64(api_key)`.
+    ///
+    /// For an Authentik forward-auth edge, this is the Authentik username and
+    /// an application password joined with a colon (`username:app-password`).
+    /// GET requests never carry it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
 }
 
 trait ReadWrite: std::io::Read + std::io::Write {}
@@ -329,6 +337,7 @@ impl Default for Config {
             force_replace: Some(false),
             no_browser: Some(false),
             api_url: Some(DEFAULT_API_URL.to_string()),
+            api_key: None,
         }
     }
 }
@@ -338,25 +347,36 @@ fn open_or_create_config(filepath: &PathBuf) -> Result<Config, GoToError> {
 
     // Read-only first: works on read-only filesystems (e.g. /nix/store) where
     // an existing valid config does not need to be rewritten.
-    if filepath.exists() {
+    let existing_config = if filepath.exists() {
         let buf = std::fs::read_to_string(filepath)
             .map_err(|err| GoToError::CliError(format!("read config file: {err}")))?;
-        if !buf.is_empty() {
-            return serde_yaml::from_str(&buf)
-                .map_err(|err| GoToError::CliError(format!("parse config data: {err}")));
+        if buf.is_empty() {
+            None
+        } else {
+            Some(
+                serde_yaml::from_str(&buf)
+                    .map_err(|err| GoToError::CliError(format!("parse config data: {err}"))),
+            )
+        }
+    } else {
+        None
+    };
+
+    match existing_config {
+        Some(config) => config,
+        None => {
+            // File missing or empty: create it and populate with defaults.
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .read(true)
+                .truncate(false)
+                .open(filepath)
+                .map_err(|err| GoToError::CliError(format!("open config file: {err}")))?;
+
+            read_or_write_config(&mut file)
         }
     }
-
-    // File missing or empty: create it and populate with defaults.
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .read(true)
-        .truncate(false)
-        .open(filepath)
-        .map_err(|err| GoToError::CliError(format!("open config file: {err}")))?;
-
-    read_or_write_config(&mut file)
 }
 
 fn read_or_write_config(file: &mut dyn ReadWrite) -> Result<Config, GoToError> {
@@ -382,9 +402,11 @@ fn read_or_write_config(file: &mut dyn ReadWrite) -> Result<Config, GoToError> {
 
 #[cfg(test)]
 mod config_tests {
-    use std::env::temp_dir;
-    use std::fs::File;
-    use std::io::{Cursor, Error, Read, Result, Write};
+    use std::{
+        env::temp_dir,
+        fs::File,
+        io::{Cursor, Error, Read, Result, Write},
+    };
 
     use super::*;
 
@@ -432,9 +454,58 @@ mod config_tests {
     }
 
     #[test]
+    fn test_read_config_with_wrong_shape() {
+        // Valid utf-8 that is not a config map must fail with a parse error.
+        let mut data: Vec<u8> = Vec::from("[1, 2, 3]");
+        let mut mock_file = Cursor::new(&mut data);
+
+        let err = read_or_write_config(&mut mock_file).unwrap_err();
+
+        assert_eq!(
+            GoToError::CliError(
+                "parse config data: invalid type: sequence, expected struct Config".to_string()
+            ),
+            err
+        );
+    }
+
+    #[test]
+    fn test_read_legacy_config_without_api_key() {
+        let mut data: Vec<u8> = Vec::from("api_url: \"https://go.example\"\nsilent: false");
+        let mut mock_file = Cursor::new(&mut data);
+
+        let got = read_or_write_config(&mut mock_file).unwrap();
+
+        assert_eq!(Some("https://go.example".to_string()), got.api_url);
+        assert_eq!(Some(false), got.silent);
+        assert_eq!(None, got.api_key, "legacy configs must keep deserializing");
+    }
+
+    #[test]
+    fn test_read_config_with_api_key() {
+        let mut data: Vec<u8> =
+            Vec::from("api_url: \"https://go.example\"\napi_key: \"thomas:hunter2\"");
+        let mut mock_file = Cursor::new(&mut data);
+
+        let got = read_or_write_config(&mut mock_file).unwrap();
+
+        assert_eq!(Some("thomas:hunter2".to_string()), got.api_key);
+    }
+
+    #[test]
+    fn test_default_config_omits_empty_api_key() {
+        let serialized = serde_yaml::to_string(&Config::default()).unwrap();
+
+        assert!(!serialized.contains("api_key"), "{}", serialized);
+    }
+
+    #[test]
     fn test_create_config() {
         let mut filepath = temp_dir();
         filepath.push("test_create_config.yml");
+        // Start clean: a file left by a previous run would take the
+        // read-existing path instead of the creation path under test.
+        let _ = std::fs::remove_file(&filepath);
 
         let got = open_or_create_config(&filepath);
         assert!(got.is_ok());
@@ -444,6 +515,19 @@ mod config_tests {
         file.read_to_string(&mut content).unwrap();
 
         assert!(content.contains("api_url"));
+    }
+
+    #[test]
+    fn test_existing_empty_config_is_recreated_with_defaults() {
+        let mut filepath = temp_dir();
+        filepath.push("test_existing_empty_config.yml");
+        let _ = std::fs::remove_file(&filepath);
+
+        File::create(&filepath).unwrap();
+        assert!(filepath.exists());
+
+        let got = open_or_create_config(&filepath).unwrap();
+        assert_eq!(Config::default(), got);
     }
 
     #[test]
@@ -523,6 +607,27 @@ mod config_tests {
             "{:?}",
             err
         );
+    }
+
+    #[test]
+    fn test_open_unreadable_existing_config() {
+        // An existing entry that cannot be read back (here: a directory) must
+        // surface a read-config-file error instead of being recreated.
+        let mut filepath = temp_dir();
+        filepath.push("test_open_unreadable_existing_config.d");
+        std::fs::create_dir_all(&filepath).unwrap();
+
+        let got = open_or_create_config(&filepath);
+        assert!(got.is_err());
+
+        let err = got.err().unwrap();
+        assert!(
+            format!("{:?}", err).contains("read config file:"),
+            "{:?}",
+            err
+        );
+
+        let _ = std::fs::remove_dir(&filepath);
     }
 
     struct RWMock {
@@ -618,7 +723,7 @@ async fn main() -> Result<(), GoToError> {
 
     let cli = Cli {
         options,
-        client: HttpClient::new(api_url),
+        client: HttpClient::new(api_url, config.api_key.clone()),
     };
 
     cli.run().await
@@ -650,6 +755,7 @@ fn test_get_api_url() {
         force_replace: None,
         silent: None,
         no_browser: None,
+        api_key: None,
     };
 
     // default
@@ -986,17 +1092,55 @@ mod cli_errors_test {
     }
 }
 
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Encode `data` as standard base64 with padding (RFC 4648).
+fn base64_encode(data: &[u8]) -> String {
+    let mut encoded = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(*chunk.get(1).unwrap_or(&0));
+        let b2 = u32::from(*chunk.get(2).unwrap_or(&0));
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        encoded.push(BASE64_ALPHABET[((triple >> 18) & 0x3f) as usize] as char);
+        encoded.push(BASE64_ALPHABET[((triple >> 12) & 0x3f) as usize] as char);
+        encoded.push(if chunk.len() > 1 {
+            BASE64_ALPHABET[((triple >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        encoded.push(if chunk.len() > 2 {
+            BASE64_ALPHABET[(triple & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    encoded
+}
+
+#[test]
+fn test_base64_encode_rfc4648_vectors() {
+    assert_eq!("", base64_encode(b""));
+    assert_eq!("Zg==", base64_encode(b"f"));
+    assert_eq!("Zm8=", base64_encode(b"fo"));
+    assert_eq!("Zm9v", base64_encode(b"foo"));
+    assert_eq!("Zm9vYg==", base64_encode(b"foob"));
+    assert_eq!("Zm9vYmE=", base64_encode(b"fooba"));
+    assert_eq!("Zm9vYmFy", base64_encode(b"foobar"));
+}
+
 struct HttpClient {
     base_url: String,
+    api_key: Option<String>,
 }
 
 impl HttpClient {
-    fn new(base_url: String) -> Self {
-        Self { base_url }
+    fn new(base_url: String, api_key: Option<String>) -> Self {
+        Self { base_url, api_key }
     }
-}
 
-impl HttpClient {
     async fn create_short_url(
         self,
         shorturl: String,
@@ -1005,12 +1149,13 @@ impl HttpClient {
     ) -> Result<(), GoToError> {
         let client = HyperClient::new();
 
-        let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
-        let req = Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(Body::from(target))
-            .expect("request builder should not fail for valid method, uri, and body");
+        let req = build_mutation_request(
+            &self.base_url,
+            &shorturl,
+            target,
+            method,
+            self.api_key.as_deref(),
+        )?;
 
         let resp = client
             .request(req)
@@ -1033,6 +1178,30 @@ impl HttpClient {
 
         Ok(())
     }
+}
+
+/// Build the request for a state-changing call (`POST`/`PUT`).
+///
+/// When `api_key` is set, exactly one `Authorization: Basic <base64>` header
+/// is attached. Resolution requests never go through here.
+fn build_mutation_request(
+    base_url: &str,
+    shorturl: &str,
+    target: String,
+    method: Method,
+    api_key: Option<&str>,
+) -> Result<Request<Body>, GoToError> {
+    let uri = format!("{}/{}", base_url, shorturl).parse::<Uri>()?;
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some(api_key) = api_key {
+        builder = builder.header(
+            hyper::header::AUTHORIZATION,
+            format!("Basic {}", base64_encode(api_key.as_bytes())),
+        );
+    }
+    Ok(builder
+        .body(Body::from(target))
+        .expect("request builder should not fail for valid method, uri, and body"))
 }
 
 #[async_trait]
@@ -1097,9 +1266,133 @@ fn test_from_tostrerror() {
 
 #[cfg(test)]
 mod http_client_tests {
+    use httpmock::{Method, MockServer};
+
     use super::*;
 
-    use httpmock::{Method, MockServer};
+    #[test]
+    fn test_build_mutation_request_attaches_basic_auth_exactly_once() {
+        let req = build_mutation_request(
+            "http://localhost",
+            "hello",
+            "http://target".to_string(),
+            hyper::Method::POST,
+            Some("thomas:secret"),
+        )
+        .unwrap();
+
+        assert_eq!(&hyper::Method::POST, req.method());
+        assert_eq!(
+            &hyper::Uri::from_static("http://localhost/hello"),
+            req.uri()
+        );
+        let headers = req.headers().get_all(hyper::header::AUTHORIZATION);
+        assert_eq!(1, headers.iter().count());
+        assert_eq!(
+            hyper::header::HeaderValue::from_static("Basic dGhvbWFzOnNlY3JldA=="),
+            headers.iter().next().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_build_mutation_request_without_api_key_has_no_authorization() {
+        let req = build_mutation_request(
+            "http://localhost",
+            "hello",
+            "http://target".to_string(),
+            hyper::Method::PUT,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(&hyper::Method::PUT, req.method());
+        assert!(req.headers().get(hyper::header::AUTHORIZATION).is_none());
+    }
+
+    #[test]
+    fn test_build_mutation_request_invalid_uri() {
+        let res = build_mutation_request(
+            "this is an invalid url",
+            "hello",
+            "http://target".to_string(),
+            hyper::Method::POST,
+            Some("thomas:secret"),
+        );
+
+        let err = res.unwrap_err();
+        assert_eq!(
+            GoToError::CliError("invalid uri character".to_string()),
+            err
+        );
+    }
+
+    #[actix_rt::test]
+    async fn test_create_new_sends_basic_auth_when_configured() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/sdfsdf")
+                .header("Authorization", "Basic dGhvbWFzOnNlY3JldA==");
+
+            then.status(200).body("ok!!");
+        });
+
+        let client = HttpClient::new(server.base_url(), Some("thomas:secret".to_string()));
+        client
+            .create_new("sdfsdf".to_string(), "http://target.com".to_string())
+            .await
+            .unwrap();
+
+        mock.assert();
+    }
+
+    #[actix_rt::test]
+    async fn test_update_url_sends_basic_auth_when_configured() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::PUT)
+                .path("/sdfsdf")
+                .header("Authorization", "Basic dGhvbWFzOnNlY3JldA==");
+
+            then.status(200).body("ok!!");
+        });
+
+        let client = HttpClient::new(server.base_url(), Some("thomas:secret".to_string()));
+        client
+            .update_url("sdfsdf".to_string(), "http://target.com".to_string())
+            .await
+            .unwrap();
+
+        mock.assert();
+    }
+
+    #[actix_rt::test]
+    async fn test_get_long_url_never_sends_authorization_even_when_configured() {
+        let server = MockServer::start();
+
+        // Matches any GET carrying an Authorization header; if the client ever
+        // leaks credentials on resolution this mock answers 500 and fails the test.
+        let leak = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .header_exists("Authorization");
+
+            then.status(500).body("credential leaked");
+        });
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/shorturl5");
+
+            then.status(302)
+                .header("location", "http://hi.there")
+                .body("bla bla bla");
+        });
+
+        let client = HttpClient::new(server.base_url(), Some("thomas:secret".to_string()));
+        let res = client.get_long_url("shorturl5".to_string()).await.unwrap();
+
+        assert_eq!("http://hi.there", res);
+        assert_eq!(0, leak.calls());
+        mock.assert();
+    }
 
     #[actix_rt::test]
     async fn test_create_new() {
@@ -1110,7 +1403,7 @@ mod http_client_tests {
             then.status(200).body("ok!!");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         client
             .create_new("sdfsdf".to_string(), "http://target.com".to_string())
             .await
@@ -1123,12 +1416,12 @@ mod http_client_tests {
     async fn test_update_url() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::PUT).path("/sdfsdf");
+            when.method(httpmock::Method::PUT).path("/sdfsdf");
 
             then.status(200).body("ok!!");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         client
             .update_url("sdfsdf".to_string(), "http://target.com".to_string())
             .await
@@ -1146,7 +1439,7 @@ mod http_client_tests {
             then.status(400).body("è_é");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client
             .create_new("sdfsdf".to_string(), "http://target.com".to_string())
             .await;
@@ -1164,7 +1457,7 @@ mod http_client_tests {
             then.status(500).body("woops");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client
             .create_new("sdfsdf".to_string(), "http://target.com".to_string())
             .await;
@@ -1182,7 +1475,7 @@ mod http_client_tests {
             then.status(500).body([0, 159, 146, 150]);
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client
             .create_new("qqqqq".to_string(), "http://target.com".to_string())
             .await;
@@ -1200,14 +1493,14 @@ mod http_client_tests {
     async fn test_get_long_url() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::GET).path("/shorturl3");
+            when.method(httpmock::Method::GET).path("/shorturl3");
 
             then.status(302)
                 .header("location", "http://hi.there")
                 .body("bla bla bla");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client.get_long_url("shorturl3".to_string()).await.unwrap();
 
         mock.assert();
@@ -1218,12 +1511,12 @@ mod http_client_tests {
     async fn test_get_long_url_api_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::GET).path("/shorturl4");
+            when.method(httpmock::Method::GET).path("/shorturl4");
 
             then.status(500).body("oh no");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         mock.assert();
@@ -1234,12 +1527,12 @@ mod http_client_tests {
     async fn test_get_long_url_client_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::GET).path("/shorturl4");
+            when.method(httpmock::Method::GET).path("/shorturl4");
 
             then.status(400).body("oh no!!");
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         mock.assert();
@@ -1250,12 +1543,12 @@ mod http_client_tests {
     async fn test_get_long_url_no_redirection_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::GET).path("/shorturl4");
+            when.method(httpmock::Method::GET).path("/shorturl4");
 
             then.status(200);
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         mock.assert();
@@ -1266,12 +1559,12 @@ mod http_client_tests {
     async fn test_get_long_url_no_redirection_err_2() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::GET).path("/shorturl4");
+            when.method(httpmock::Method::GET).path("/shorturl4");
 
             then.status(302);
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         mock.assert();
@@ -1282,12 +1575,12 @@ mod http_client_tests {
     async fn test_get_long_url_not_utf8_err() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(Method::GET).path("/shorturl4");
+            when.method(httpmock::Method::GET).path("/shorturl4");
 
             then.status(500).body([0, 159, 146, 150]);
         });
 
-        let client = HttpClient::new(server.base_url());
+        let client = HttpClient::new(server.base_url(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         mock.assert();
@@ -1301,7 +1594,7 @@ mod http_client_tests {
 
     #[actix_rt::test]
     async fn test_get_long_url_invalid_uri() {
-        let client = HttpClient::new("this is an invalid url".to_string());
+        let client = HttpClient::new("this is an invalid url".to_string(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         assert_eq!(
@@ -1312,7 +1605,7 @@ mod http_client_tests {
 
     #[actix_rt::test]
     async fn test_get_long_url_transport_err() {
-        let client = HttpClient::new("http://127.0.0.1:1".to_string());
+        let client = HttpClient::new("http://127.0.0.1:1".to_string(), None);
         let res = client.get_long_url("shorturl4".to_string()).await;
 
         assert!(matches!(res, Err(GoToError::ApiError(_))));
@@ -1320,7 +1613,7 @@ mod http_client_tests {
 
     #[actix_rt::test]
     async fn test_create_new_invalid_uri() {
-        let client = HttpClient::new("this is an invalid url".to_string());
+        let client = HttpClient::new("this is an invalid url".to_string(), None);
         let res = client
             .create_new("shorturl4".to_string(), "http://target.com".to_string())
             .await;
@@ -1333,7 +1626,7 @@ mod http_client_tests {
 
     #[actix_rt::test]
     async fn test_create_new_transport_err() {
-        let client = HttpClient::new("http://127.0.0.1:1".to_string());
+        let client = HttpClient::new("http://127.0.0.1:1".to_string(), None);
         let res = client
             .create_new("shorturl4".to_string(), "http://target.com".to_string())
             .await;
