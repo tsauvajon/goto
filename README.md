@@ -90,6 +90,26 @@ goto hello --no-open-browser
 goto hello http://planet --force
 ```
 
+#### Authentication
+
+If the API sits behind a proxy that requires authentication for state-changing
+calls (link creation/replacement), set `api_key` in
+`$HOME/.config/goto/config.yml`:
+
+```yaml
+api_url: https://go.example.com
+api_key: "username:app-password"
+```
+
+- Creating and replacing URLs sends `Authorization: Basic base64(api_key)`.
+- Browsing/resolving URLs never sends credentials.
+- Keep the config file private: `chmod 600 $HOME/.config/goto/config.yml`.
+- For an Authentik-protected deployment, `app-password` is an Authentik
+  application password, authorized through the Goto application's policy (e.g.
+  a dedicated writers group). Use a dedicated application password for this
+  client; authorization is enforced by the server-side policy, not by the
+  credential label.
+
 #### Clean-up
 
 ```sh
