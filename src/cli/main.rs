@@ -718,15 +718,17 @@ async fn main() -> Result<(), GoToError> {
 
     let config = open_or_create_config(&filepath).unwrap();
 
-    let options = CliOptions::new(&args, &config);
-    let api_url = get_api_url(&args, &config);
+    create_cli(&args, &config).run().await
+}
 
-    let cli = Cli {
+fn create_cli(args: &Args, config: &Config) -> Cli<HttpClient> {
+    let options = CliOptions::new(args, config);
+    let api_url = get_api_url(args, config);
+
+    Cli {
         options,
         client: HttpClient::new(api_url, config.api_key.clone()),
-    };
-
-    cli.run().await
+    }
 }
 
 fn get_api_url(args: &Args, config: &Config) -> String {
@@ -787,6 +789,37 @@ fn test_get_api_url() {
     config.api_url = Some("a".to_string());
     let got = get_api_url(&args, &config);
     assert_eq!("a".to_string(), got);
+}
+
+#[test]
+fn test_create_cli_propagates_api_key_to_client() {
+    let args = Args {
+        shorturl: String::new(),
+        target: None,
+        api_url: None,
+        force_replace: false,
+        silent: false,
+        no_browser: false,
+    };
+
+    // configured key reaches the HTTP client for mutating requests
+    let config = Config {
+        api_url: None,
+        force_replace: None,
+        silent: None,
+        no_browser: None,
+        api_key: Some("thomas:hunter2".to_string()),
+    };
+    let cli = create_cli(&args, &config);
+    assert_eq!(Some("thomas:hunter2".to_string()), cli.client.api_key);
+
+    // absent key stays absent
+    let config = Config {
+        api_key: None,
+        ..config
+    };
+    let cli = create_cli(&args, &config);
+    assert_eq!(None, cli.client.api_key);
 }
 
 #[async_trait]
