@@ -1128,6 +1128,11 @@ mod cli_errors_test {
 const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/// Build a hyper client with TLS support so `https://` API URLs work.
+fn https_client() -> HyperClient<hyper_tls::HttpsConnector<hyper::client::HttpConnector>, Body> {
+    HyperClient::builder().build(hyper_tls::HttpsConnector::new())
+}
+
 /// Encode `data` as standard base64 with padding (RFC 4648).
 fn base64_encode(data: &[u8]) -> String {
     let mut encoded = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -1180,7 +1185,7 @@ impl HttpClient {
         target: String,
         method: Method,
     ) -> Result<(), GoToError> {
-        let client = HyperClient::new();
+        let client = https_client();
 
         let req = build_mutation_request(
             &self.base_url,
@@ -1194,6 +1199,16 @@ impl HttpClient {
             .request(req)
             .await
             .map_err(|err| GoToError::ApiError(err.to_string()))?;
+
+        // A mutation answered by a redirect means the edge sent us to an
+        // authentication flow (missing or rejected credentials): never
+        // treat that as success.
+        if resp.status().is_redirection() {
+            return Err(GoToError::CliError(
+                "authentication required: the server redirected the request; set api_key in the goto config"
+                    .to_string(),
+            ));
+        }
 
         let is_server_error = resp.status().is_server_error();
         let is_client_error = resp.status().is_client_error();
@@ -1248,7 +1263,7 @@ impl Client for HttpClient {
     }
 
     async fn get_long_url(self, shorturl: String) -> Result<String, GoToError> {
-        let client = HyperClient::new();
+        let client = https_client();
         let uri = format!("{}/{}", self.base_url, shorturl).parse::<Uri>()?;
 
         let resp = client
@@ -1425,6 +1440,30 @@ mod http_client_tests {
         assert_eq!("http://hi.there", res);
         assert_eq!(0, leak.calls());
         mock.assert();
+    }
+
+    #[actix_rt::test]
+    async fn test_create_new_redirect_means_authentication_required() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST).path("/sdfsdf");
+
+            then.status(302)
+                .header("location", "https://auth.example/start");
+        });
+
+        let client = HttpClient::new(server.base_url(), None);
+        let res = client
+            .create_new("sdfsdf".to_string(), "http://target.com".to_string())
+            .await;
+
+        mock.assert();
+        match res {
+            Ok(_) => panic!("a redirected mutation must not be reported as success"),
+            Err(err) => assert!(
+                matches!(err, GoToError::CliError(ref m) if m.contains("authentication required"))
+            ),
+        }
     }
 
     #[actix_rt::test]
