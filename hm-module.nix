@@ -87,23 +87,70 @@ in
         bookmarks database directly through the CLI.
       '';
     };
+
+    apiKey = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        Optional credential sent as `Authorization: Basic base64(api_key)`
+        on state-changing requests only (create/replace). For an Authentik
+        forward-auth edge this is `username:app-password`. When set,
+        `~/.config/goto/config.yml` contains a secret and is written with
+        mode 0600. Prefer {option}`apiKeyFile` so the secret never enters
+        the Nix store.
+      '';
+    };
+
+    apiKeyFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = ''
+        Like {option}`apiKey`, but the value is read at activation time from
+        this file (kept outside git and the Nix store). The rendered
+        `~/.config/goto/config.yml` gets mode 0600. Exactly one of the two
+        options may be set.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = !(cfg.apiKey != null && cfg.apiKeyFile != null);
+        message = "programs.gotoLinks: set either apiKey or apiKeyFile, not both.";
+      }
+    ];
+
     home.packages = [ cfg.package ];
 
-    xdg.configFile = lib.mkMerge [
-      {
-        "goto/config.yml".text = ''
+    xdg.configFile."goto/config.yml" = {
+      text =
+        ''
           api_url: ${cfg.apiUrl}
           force_replace: ${if cfg.forceReplace then "true" else "false"}
           silent: ${if cfg.silent then "true" else "false"}
           no_browser: ${if cfg.noBrowser then "true" else "false"}
+        ''
+        + lib.optionalString (cfg.apiKey != null) ''
+          api_key: "${cfg.apiKey}"
         '';
-      }
-      (mkIf (cfg.bookmarksFile != null) {
-        "goto/database.yml".source = cfg.bookmarksFile;
-      })
-    ];
+    } // lib.optionalAttrs ((cfg.apiKey != null) || (cfg.apiKeyFile != null)) {
+      mode = "0600";
+    };
+
+    home.activation.gotoApiKeyFile = mkIf (cfg.apiKeyFile != null) (
+      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+          cfg="$HOME/.config/goto/config.yml"
+          key="$(cat ${lib.escapeShellArg (toString cfg.apiKeyFile)})"
+          [[ -n "$key" ]] || { echo "goto: apiKeyFile is empty" >&2; exit 1; }
+          # YAML single-quote style: the quote char is doubled
+          q="'''"
+          escaped="''${key//$q/$q$q}"
+          tmp="$(mktemp)"
+          grep -v '^api_key:' "$cfg" >"$tmp" || true
+          printf "api_key: '%s'\n" "$escaped" >>"$tmp"
+          chmod 600 "$tmp"
+          mv "$tmp" "$cfg"
+        '');
   };
 }
